@@ -3,6 +3,8 @@
 [![CI](https://github.com/Abelo9996/agent-fence/actions/workflows/ci.yml/badge.svg)](https://github.com/Abelo9996/agent-fence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+![agent-fence check denying "cd app && git push --force" and "cat .env" with the matching rule and reason, and allowing "npm test"](docs/demo.gif)
+
 **One permission policy file decides what every coding agent on your machine may run, read and write, and logs everything it tried.**
 
 Write the rules once in `.agent-fence.toml`. Claude Code and Codex enforce them
