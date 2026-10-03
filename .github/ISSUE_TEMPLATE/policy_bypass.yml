@@ -1,0 +1,38 @@
+name: Policy bypass report
+description: An input that gets past a rule that should match it
+labels: [bypass]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        agent-fence is a policy layer, not a sandbox; the README lists what it cannot stop. Reports of inputs
+        that slip past a rule the parser should understand are very welcome. If the bypass could harm users of
+        a published version, describe it without a working payload and ask for a private channel.
+  - type: textarea
+    id: input
+    attributes:
+      label: Input
+      description: The command, path or tool payload that was allowed.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Rule that should have matched
+      placeholder: git-force-push, or paste your rule
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: Output of agent-fence check --json
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: agent-fence version and OS
+    validations:
+      required: true

@@ -1,0 +1,27 @@
+name: Agent integration request
+description: Ask for support for another coding agent
+labels: [agent-integration]
+body:
+  - type: input
+    id: agent
+    attributes:
+      label: Agent
+      placeholder: Name and link
+    validations:
+      required: true
+  - type: textarea
+    id: hooks
+    attributes:
+      label: Hook or permission API
+      description: Can the agent run a command before a tool call and refuse it? Link the docs, the config file format and the payload schema.
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: What happens today with agent-fence exec or agent-fence-shell
+      description: Where do the wrappers fall short for this agent?
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else

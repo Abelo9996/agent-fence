@@ -1,0 +1,46 @@
+name: Bug report
+description: agent-fence made a wrong decision, crashed, or broke an agent's settings
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Ideally a policy snippet plus an `agent-fence check` command.
+      placeholder: |
+        printf '[[rules]]\nid = "x"\n...' > .agent-fence.toml
+        agent-fence check --tool bash --input "..." --json
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Output of the failing command. Remove any secrets.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: agent-fence version
+      placeholder: agent-fence --version
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS and Node version
+      placeholder: macOS 15, node 22.11
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and integration
+      placeholder: Claude Code hook, Codex hook, agent-fence exec, agent-fence-shell, ...

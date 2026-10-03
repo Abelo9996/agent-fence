@@ -86,7 +86,7 @@ command = [
 reason = "Installs or removes packages, which downloads and can run third-party code. Confirm with the user first."
 
 [[rules]]
-id = "npm-publish"
+id = "publish-or-delete"
 action = "deny"
 command = ["npm publish", "pnpm publish", "yarn publish", "cargo publish", "twine upload", "gem push", "gh release create", "gh repo delete", "gh repo edit --visibility*"]
 reason = "Publishing or changing visibility is public and hard to take back. Ask the user to do it."
