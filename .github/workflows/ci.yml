@@ -35,7 +35,7 @@ jobs:
           npm pack --pack-destination "$RUNNER_TEMP/pkg"
           cd "$RUNNER_TEMP/pkg"
           npm init -y > /dev/null
-          npm install ./agent-fence-*.tgz
+          npm install ./abelo9996-agent-fence-*.tgz
           set +e
           npx agent-fence check --input "cd app && git push --force"
           code=$?
