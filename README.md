@@ -15,7 +15,7 @@ tried and what was stopped.
 ## Quickstart (30 seconds)
 
 ```bash
-npm install -g github:Abelo9996/agent-fence    # or: npx github:Abelo9996/agent-fence <command>
+npm install -g @abelo9996/agent-fence    # or: npx @abelo9996/agent-fence <command>
 
 cd your-project
 agent-fence init                               # commented starter .agent-fence.toml

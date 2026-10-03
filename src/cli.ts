@@ -242,7 +242,7 @@ cli
         if (!o.command && /[\\/]/.test(r.command)) {
           process.stdout.write(
             `Note: the hook runs agent-fence by absolute path${runningFromNpxCache() ? " from the npx cache, which can be cleaned up" : ""}. ` +
-              `For a stable hook install it globally (npm install -g github:Abelo9996/agent-fence) and re-run this command.\n`,
+              `For a stable hook install it globally (npm install -g @abelo9996/agent-fence) and re-run this command.\n`,
           );
         }
         if (agent === "codex") {

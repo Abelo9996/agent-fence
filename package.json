@@ -1,5 +1,5 @@
 {
-  "name": "agent-fence",
+  "name": "@abelo9996/agent-fence",
   "version": "0.1.0",
   "description": "One permission policy for every coding agent.",
   "type": "module",
@@ -57,5 +57,8 @@
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

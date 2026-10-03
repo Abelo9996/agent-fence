@@ -44,7 +44,7 @@ If you think a rule is wrong, say so and show the change you would make.
 
 ## Useful commands
 
-Run as `agent-fence` if it is on PATH, otherwise `npx -y github:Abelo9996/agent-fence`.
+Run as `agent-fence` if it is on PATH, otherwise `npx -y @abelo9996/agent-fence`.
 
 ```bash
 agent-fence check --tool bash --input "git push origin main"   # exit 0 allow, 2 ask, 3 deny
