@@ -298,7 +298,8 @@ export function loadPolicy(opts: LoadOptions = {}): Policy {
 
   // The OS temp directory varies by machine, so it is added here rather than in the TOML.
   const temp = rules.find((r) => r.id === "write-temp" && r.layer === "builtin");
-  if (temp?.paths) temp.paths.push(compilePathPattern(toPosix(os.tmpdir()) + "/**", root));
+  // It gets the specificity of "/tmp/**" so a long temp path does not outrank other rules.
+  if (temp?.paths) temp.paths.push({ ...compilePathPattern(toPosix(os.tmpdir()) + "/**", root), specificity: 5 });
 
   return { root, rules, defaults, defaultsFrom, tests, files, overridden };
 }

@@ -122,12 +122,14 @@ id = "write-outside-project"
 action = "deny"
 tool = "write"
 outside_project = true
+priority = -100
 reason = "Writes outside the project directory are blocked. Ask the user, or work inside the project."
 
 [[rules]]
 id = "write-temp"
 action = "allow"
 tool = "write"
+priority = -50
 path = ["/tmp/**", "/private/tmp/**", "/var/folders/**", "/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/fd/*"]
 reason = "Temporary files and standard streams."
 
