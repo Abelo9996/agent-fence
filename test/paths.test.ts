@@ -21,7 +21,7 @@ describe("normalizePath", () => {
   it("treats backslashes as separators", () => {
     const { root } = sandbox();
     expect(normalizePath("a\\b\\..\\c.txt", root)).toBe(`${toPosix(root)}/a/c.txt`);
-    expect(normalizePath("C:\\Users\\me\\..\\x\\.env", "C:\\proj", { resolveSymlinks: false })).toBe("C:/Users/x/.env");
+    expect(normalizePath("C:\\Work\\me\\..\\x\\.env", "C:\\proj", { resolveSymlinks: false })).toBe("C:/Work/x/.env");
   });
 
   it.skipIf(process.platform === "win32")("resolves symlinks, including for files that do not exist yet", () => {
