@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { Decision, Request } from "./engine.js";
-import { stateDir } from "./paths.js";
+import { normalizePath, stateDir } from "./paths.js";
 import { redact } from "./secrets.js";
 
 export interface AuditEntry {
@@ -53,7 +53,7 @@ export function appendAudit(e: {
   const entry: AuditEntry = {
     ts: new Date().toISOString(),
     source: e.source,
-    project: e.project,
+    project: normalizePath(e.project, e.project),
     cwd: e.cwd,
     tool: e.req.tool,
     agentTool: e.agentTool,

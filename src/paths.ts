@@ -92,6 +92,8 @@ const DRIVE = /^[A-Za-z]:[\\/]/;
 export function normalizePath(input: string, cwd: string, opts: { resolveSymlinks?: boolean } = {}): string {
   let p = expandHome(input.trim());
   p = toPosix(p);
+  // Device paths such as /dev/null are kept as written on every platform.
+  if (/^\/dev\/[^/]+(\/[^/]+)?$/.test(p)) return p;
   const cwdPosix = toPosix(cwd);
   let abs: string;
   if (DRIVE.test(p) || DRIVE.test(cwdPosix)) {

@@ -51,7 +51,7 @@ describe("built-in policy", () => {
     const { root } = sandbox();
     expect(bash(root, "cat .env").rule).toBe("secret-files");
     expect(bash(root, "cp ~/.ssh/id_rsa /tmp/x").action).toBe("deny");
-    expect(bash(root, `echo x > ${outsidePath("f")}`).rule).toBe("write-outside-project");
+    expect(bash(root, `echo x > ${outsidePath("f").replace(/\\/g, "/")}`).rule).toBe("write-outside-project");
     expect(bash(root, "echo x > .agent-fence.toml").rule).toBe("protect-fence");
     expect(bash(root, "cd sub && cat ../.env").action).toBe("deny");
   });

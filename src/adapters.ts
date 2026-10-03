@@ -41,7 +41,9 @@ export function requestsFor(p: HookPayload): Request[] {
     case "shell":
     case "local_shell": {
       const c = input.command;
-      const command = Array.isArray(c) ? c.map(String).map(quoteArg).join(" ") : str(c);
+      let command = Array.isArray(c) ? c.map(String).map(quoteArg).join(" ") : str(c);
+      // PowerShell escapes with backticks, not backslashes, so backslashes there are path separators.
+      if (tool === "PowerShell" && command) command = command.replace(/\\/g, "/");
       return command === undefined ? [] : [{ tool: "bash", command, cwd }];
     }
     case "apply_patch": {
