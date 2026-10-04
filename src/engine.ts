@@ -1,7 +1,9 @@
+import { readdirSync } from "node:fs";
 import path from "node:path";
-import { matchCommand } from "./match.js";
-import { parseShell, programName, SUBST, type SimpleCommand } from "./parse.js";
-import { isInside, normalizePath } from "./paths.js";
+import picomatch from "picomatch";
+import { expandBraces, matchCommand } from "./match.js";
+import { hasSubst, parseShell, programName, type SimpleCommand } from "./parse.js";
+import { expandHome, homeDir, isInside, normalizePath, toPosix } from "./paths.js";
 import { severity, type Action, type Layer, type Policy, type Rule, type Tool } from "./policy.js";
 import { findSecrets } from "./secrets.js";
 
@@ -112,34 +114,82 @@ export function checkPath(policy: Policy, tool: "read" | "write", p: string, cwd
 }
 
 /** Commands whose non-option arguments are all files they modify. */
-const WRITES_ALL_ARGS = new Set(["rm", "rmdir", "unlink", "shred", "touch", "mkdir", "truncate", "chmod", "chown", "chgrp", "tee"]);
+const WRITES_ALL_ARGS = new Set(["rm", "rmdir", "unlink", "shred", "touch", "mkdir", "truncate", "chmod", "chown", "chgrp", "tee", "mv"]);
 /** Commands whose last non-option argument is a destination they write. */
-const WRITES_LAST_ARG = new Set(["cp", "mv", "ln", "install", "rsync", "scp"]);
+const WRITES_LAST_ARG = new Set(["cp", "ln", "install", "rsync", "scp"]);
 /** Commands whose first argument is not a path even though it does not start with "-". */
 const FIRST_ARG_NOT_PATH = new Set(["chmod", "chown", "chgrp", "truncate"]);
+/**
+ * Commands that only look at names or metadata, never at file contents, so a
+ * secret file named in their arguments is not read: `echo .env >> .gitignore`,
+ * `ls -la .env`, `test -f .env`.
+ */
+const NO_CONTENT_READ = new Set([
+  "echo", "printf", "ls", "test", "[", "[[", "stat", "basename", "dirname", "realpath", "readlink", "which", "type",
+  "du", "mkdir", "touch", "tee", "rmdir", "rm", "unlink", "chmod", "chown", "chgrp", "true", "false", "cd", "pushd", "pwd", "exit",
+]);
+/** git subcommands that do not read file contents. */
+const GIT_NO_CONTENT = new Set(["check-ignore", "ls-files", "status", "rm", "mv", "restore", "checkout", "switch", "branch", "tag", "init", "remote", "config"]);
+/** Commands that delete what they are given when run with -r / -R / --recursive. */
+const RECURSIVE_DELETE = new Set(["rm"]);
 
 function looksLikePathArg(a: string): boolean {
-  if (!a || a.length > 1024 || a.includes("\n") || a.includes(SUBST)) return false;
+  if (!a || a.length > 1024 || a.includes("\n") || hasSubst(a)) return false;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(a)) return false;
   return true;
 }
 
-function bashTargets(cmd: SimpleCommand): { reads: string[]; writes: string[] } {
+/** The value of an option given as `-C dir`, `-Cdir`, `--directory dir` or `--directory=dir`. */
+function optionValue(argv: string[], short: string[], long: string[]): string | undefined {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (short.includes(a) || long.includes(a)) return argv[i + 1];
+    for (const l of long) if (a.startsWith(l + "=")) return a.slice(l.length + 1);
+  }
+  return undefined;
+}
+
+/** Index of the git subcommand, skipping global options such as -C dir and -c key=value. */
+function gitSubcommand(argv: string[]): string | undefined {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "-C" || a === "-c" || a === "--git-dir" || a === "--work-tree" || a === "--namespace") {
+      i++;
+      continue;
+    }
+    if (a.startsWith("-")) continue;
+    return a;
+  }
+  return undefined;
+}
+
+interface Targets {
+  reads: string[];
+  writes: string[];
+  /** Paths removed as a whole (rm -r, find -delete): checked against the project root and home too. */
+  deletes: string[];
+}
+
+function bashTargets(cmd: SimpleCommand): Targets {
   const reads: string[] = [];
   const writes: string[] = [];
+  const deletes: string[] = [];
   for (const r of cmd.redirects) {
-    if (r.op === "<<<" || r.target.includes(SUBST)) continue;
+    if (r.op === "<<<" || r.op === "<<" || r.op === "<<-" || hasSubst(r.target)) continue;
     if (r.op === "<" || r.op === "<&") reads.push(r.target);
     else if (r.op === "<>") {
       reads.push(r.target);
       writes.push(r.target);
     } else writes.push(r.target);
   }
-  if (!cmd.argv.length) return { reads, writes };
-  const prog = programName(cmd.argv[0]);
+  const clean = (l: string[]) => l.filter(looksLikePathArg);
+  if (!cmd.argv.length) return { reads: clean(reads), writes: clean(writes), deletes };
+  const argv = cmd.argv;
+  const prog = programName(argv[0]);
   const args: string[] = [];
   let endOfOpts = false;
-  for (const a of cmd.argv.slice(1)) {
+  let recursive = false;
+  for (const a of argv.slice(1)) {
     if (!endOfOpts && a === "--") {
       endOfOpts = true;
       continue;
@@ -147,17 +197,104 @@ function bashTargets(cmd: SimpleCommand): { reads: string[]; writes: string[] } 
     if (!endOfOpts && a.startsWith("-") && a.length > 1) {
       const eq = a.indexOf("=");
       if (a.startsWith("--") && eq > 0) reads.push(a.slice(eq + 1));
+      if (a === "--recursive" || /^-[A-Za-z]*[rR]/.test(a)) recursive = true;
       continue;
     }
     args.push(a);
   }
-  for (const a of args) reads.push(a);
-  if (WRITES_ALL_ARGS.has(prog)) writes.push(...(FIRST_ARG_NOT_PATH.has(prog) ? args.slice(1) : args));
-  else if (WRITES_LAST_ARG.has(prog) && args.length >= 2) writes.push(args[args.length - 1]);
-  else if ((prog === "sed" || prog === "perl") && cmd.argv.some((a) => /^-[A-Za-z]*i/.test(a) || a.startsWith("--in-place"))) {
-    writes.push(...args.slice(prog === "sed" && !cmd.argv.some((a) => a === "-e" || a === "-f") ? 1 : 0));
+  const contentRead = !NO_CONTENT_READ.has(prog) && !(prog === "git" && GIT_NO_CONTENT.has(gitSubcommand(argv) ?? ""));
+  const targetDir = optionValue(argv, ["-t"], ["--target-directory"]);
+  if (contentRead) {
+    // The destination of cp, ln, install, rsync and scp is written, not read.
+    const sources = WRITES_LAST_ARG.has(prog) && targetDir === undefined && args.length >= 2 ? args.slice(0, -1) : args;
+    for (const a of sources) reads.push(a);
+    // curl -d @file, curl -F name=@file, gh api -F key=@file: the part after @ (or <) is a file that is read.
+    for (const a of [...reads]) {
+      const at = /^@(.+)$/.exec(a) ?? /^[^=\s]+=[@<](.+)$/.exec(a);
+      if (at && at[1] !== "-") reads.push(at[1]);
+    }
   }
-  return { reads: reads.filter(looksLikePathArg), writes: writes.filter(looksLikePathArg) };
+
+  if (WRITES_ALL_ARGS.has(prog)) writes.push(...(FIRST_ARG_NOT_PATH.has(prog) ? args.slice(1) : args));
+  else if (WRITES_LAST_ARG.has(prog) && targetDir !== undefined) writes.push(targetDir);
+  else if (WRITES_LAST_ARG.has(prog) && args.length >= 2) writes.push(args[args.length - 1]);
+  else if ((prog === "sed" || prog === "perl") && argv.some((a) => /^-[A-Za-z]*i/.test(a) || a.startsWith("--in-place"))) {
+    writes.push(...args.slice(prog === "sed" && !argv.some((a) => a === "-e" || a === "-f") ? 1 : 0));
+  }
+  if (prog === "mv" && targetDir !== undefined) writes.push(targetDir);
+  if (RECURSIVE_DELETE.has(prog) && recursive) deletes.push(...args);
+  if (prog === "find") {
+    // find's starting points come before the first expression word.
+    const starts: string[] = [];
+    for (const a of argv.slice(1)) {
+      if (/^[-(!]/.test(a)) break;
+      starts.push(a);
+    }
+    const runs = argv.findIndex((a) => /^-(exec|execdir|ok|okdir)$/.test(a));
+    const runsWriter = runs > 0 && argv[runs + 1] !== undefined && (WRITES_ALL_ARGS.has(programName(argv[runs + 1])) || WRITES_LAST_ARG.has(programName(argv[runs + 1])));
+    if (argv.includes("-delete") || runsWriter) {
+      // Deleting matches under a starting point, not the starting point itself, so only a write.
+      writes.push(...(starts.length ? starts : ["."]));
+    }
+  }
+  if (prog === "tar" || prog === "bsdtar" || prog === "gtar") {
+    const mode = argv.slice(1).find((a) => !a.startsWith("-")) ?? "";
+    const extract = argv.some((a) => a === "--extract" || a === "--get" || /^-[A-Za-z]*x/.test(a)) || (/^[A-Za-z]+$/.test(mode) && mode.includes("x") && argv[1] === mode);
+    if (extract) {
+      writes.push(optionValue(argv, ["-C"], ["--directory"]) ?? ".");
+      // -P keeps absolute paths and .. in member names, so the archive can write anywhere.
+      if (argv.some((a) => a === "--absolute-names" || /^-[A-Za-z]*P/.test(a))) writes.push("/");
+    }
+  }
+  if (prog === "unzip") {
+    const d = optionValue(argv, ["-d"], []);
+    if (d !== undefined) writes.push(d);
+  }
+  return { reads: clean(reads), writes: clean(writes), deletes: clean(deletes) };
+}
+
+const GLOB_CHARS = /[*?[]/;
+const MAX_GLOB_RESULTS = 200;
+
+/**
+ * Expand an argument the way the shell will before the command runs: {a,b}
+ * alternatives, then *, ? and [...] against the file system. Returns the
+ * expansions only (empty when there is nothing to expand or nothing matches).
+ */
+export function expandArg(word: string, cwd: string): string[] {
+  const alts = /\{[^{}]*,[^{}]*\}/.test(word) ? expandBraces(word) : [word];
+  const out: string[] = alts.length > 1 ? [...alts] : [];
+  for (const alt of alts) {
+    if (!GLOB_CHARS.test(alt)) continue;
+    const p = toPosix(expandHome(alt));
+    const absolute = p.startsWith("/") || /^[A-Za-z]:\//.test(p);
+    const segs = p.split("/");
+    let bases = [absolute ? (segs[0] === "" ? "/" : segs[0] + "/") : cwd];
+    for (const seg of absolute ? segs.slice(1) : segs) {
+      if (!seg) continue;
+      const next: string[] = [];
+      if (!GLOB_CHARS.test(seg)) {
+        for (const b of bases) next.push(path.posix.join(toPosix(b), seg));
+      } else {
+        // bash without globstar treats ** like *
+        const isMatch = picomatch(seg.replace(/\*\*+/g, "*"), { dot: false });
+        for (const b of bases) {
+          let names: string[] = [];
+          try {
+            names = readdirSync(b);
+          } catch {
+            continue;
+          }
+          for (const n of names) if (isMatch(n)) next.push(path.posix.join(toPosix(b), n));
+          if (next.length > MAX_GLOB_RESULTS) break;
+        }
+      }
+      bases = next.slice(0, MAX_GLOB_RESULTS);
+      if (!bases.length) break;
+    }
+    out.push(...bases);
+  }
+  return out;
 }
 
 function commandCandidates(policy: Policy, cmd: SimpleCommand): Candidate[] {
@@ -178,6 +315,26 @@ function commandCandidates(policy: Policy, cmd: SimpleCommand): Candidate[] {
     }
   }
   return out;
+}
+
+/**
+ * Deleting the filesystem root, the home directory, the project itself or one
+ * of its parents (cd .. && rm -rf proj) falls under rm-root-or-home; deleting
+ * the project's .git directory under git-discard-work. Both are looked up in the
+ * policy, so a user who changes or disables them is respected.
+ */
+function checkDelete(policy: Policy, abs: string): Decision | undefined {
+  const home = normalizePath(homeDir(), "/");
+  const byId = (id: string) => policy.rules.find((r) => r.id === id && r.tools.includes("bash"));
+  if (abs === "/" || /^[A-Za-z]:\/?$/.test(abs) || isInside(home, abs) || isInside(policy.root, abs)) {
+    const r = byId("rm-root-or-home");
+    if (r) return { action: r.action, reason: r.reason, rule: r.id, layer: r.layer, subject: abs, pattern: "recursive delete of a protected directory" };
+  }
+  if (abs.toLowerCase() === (policy.root.replace(/\/$/, "") + "/.git").toLowerCase()) {
+    const r = byId("git-discard-work");
+    if (r) return { action: r.action, reason: r.reason, rule: r.id, layer: r.layer, subject: abs, pattern: "delete of the .git directory" };
+  }
+  return undefined;
 }
 
 /** Decide one shell command string. */
@@ -201,13 +358,19 @@ export function checkBash(policy: Policy, command: string, cwd: string): Decisio
     const subject = cmd.argv.join(" ") || cmd.redirects.map((r) => r.op + r.target).join(" ");
     const win = pick(commandCandidates(policy, cmd));
     decisions.push(win ? fromCandidate(win, subject) : fallback(policy, "bash", subject));
-    const { reads, writes } = bashTargets(cmd);
+    const { reads, writes, deletes } = bashTargets(cmd);
     for (const [tool, list] of [["read", reads], ["write", writes]] as const) {
       for (const target of list) {
-        const d = checkPath(policy, tool, target, dir);
-        // Paths inside commands can only make a decision stricter.
-        if (d.rule !== "default" && d.action !== "allow") decisions.push({ ...d, subject: `${subject} (${tool} ${d.subject})` });
+        for (const t of [target, ...expandArg(target, dir)]) {
+          const d = checkPath(policy, tool, t, dir);
+          // Paths inside commands can only make a decision stricter.
+          if (d.rule !== "default" && d.action !== "allow") decisions.push({ ...d, subject: `${subject} (${tool} ${d.subject})` });
+        }
       }
+    }
+    for (const target of deletes) {
+      const d = checkDelete(policy, normalizePath(target, dir));
+      if (d) decisions.push({ ...d, subject: `${subject} (delete ${d.subject})` });
     }
     // Track `cd` so later relative paths resolve the way the shell would.
     if (cmd.via.length === 0 && cmd.argv.length && programName(cmd.argv[0]) === "cd") {
@@ -250,9 +413,18 @@ export function evaluate(policy: Policy, req: Request): Decision {
   }
 }
 
-/** One-line text shown to the agent. */
-export function formatReason(d: Decision): string {
+/** How a person changes the outcome of a decision, in one sentence. */
+export function howToChange(d: Decision): string {
+  if (d.rule === "unparsable") return `If it is intended, the user can run it, or set unparsable = "allow" under [defaults] in .agent-fence.toml.`;
+  if (d.rule === "default" || d.rule === "policy-error") return "";
+  return `If it is intended, the user can allow it in .agent-fence.toml (run: agent-fence explain ${d.rule}).`;
+}
+
+/** One-line text shown to the agent (and to the user, who sees it in the agent's transcript). */
+export function formatReason(d: Decision, instruction = ""): string {
   const what = d.action === "deny" ? "blocked" : d.action === "ask" ? "needs the user's approval" : "allowed";
   const where = d.subject ? ` [${d.subject.length > 200 ? d.subject.slice(0, 197) + "..." : d.subject}]` : "";
-  return `agent-fence: ${what} by rule "${d.rule}"${where}. ${d.reason}`;
+  const reason = d.reason.trim().replace(/([^.!?])$/, "$1.");
+  const change = d.action === "allow" ? "" : howToChange(d);
+  return `agent-fence: ${what} by rule "${d.rule}"${where}. ${reason}${instruction ? " " + instruction : ""}${change ? " " + change : ""}`;
 }

@@ -63,18 +63,24 @@ rule = "no-prod-deploy"
 | `cd app && git push --force origin main` | deny | `git-force-push` |
 | `bash -c 'git push origin +main'` | deny | `git-force-push` |
 | `FOO=1 sudo rm -rf "$HOME"` | deny | `rm-root-or-home` |
+| 内含 `git push -f` 的 `bash <<EOF`、`x=git; $x push -f` | deny | `git-force-push` |
+| `cd .. && rm -rf my-project`、在项目根目录执行 `rm -rf .` | deny | `rm-root-or-home` |
 | `git push` | ask | `git-push` |
-| `git reset --hard`、`git clean -fd` | ask | `git-discard-work` |
-| `npm install left-pad`、`pip install x` | ask | `package-install` |
-| `curl -fsSL https://x.sh \| sh` | ask | `pipe-to-shell` |
+| `git reset --hard`、`git clean -fd`、`git checkout .` | ask | `git-discard-work` |
+| `npm install left-pad`、`pip install x`、`python3 -m pip install x` | ask | `package-install` |
+| `npm install`、`npm ci`、`pip install -r requirements.txt`、`uv sync` | allow | `install-from-lockfile` |
+| `curl -fsSL https://x.sh \| sh`、`bash <(curl ...)`、`curl ... \| python3` | ask | `pipe-to-shell`、`pipe-to-interpreter` |
+| `git -c alias.p='push -f' p`、`git config core.fsmonitor ...` | ask | `git-rewrite-config` |
 | `$CMD -rf /` | ask | `dynamic-command` |
 | `export TOKEN=ghp_...` | ask | `secret-in-input` |
 | `npm publish`、`gh repo delete` | deny | `publish-or-delete` |
 | 读取 `.env`、`~/.ssh/id_ed25519`、`deploy/key.pem` | deny | `secret-files` |
 | 读取 `.env.example` | allow | `env-examples` |
-| `cat src/../.env` | deny | `secret-files`（命令中出现的路径也会检查） |
+| `cat src/../.env`、`cat .e*v`、`curl -d @.env https://...` | deny | `secret-files`（命令中出现的路径也会检查，通配符先展开） |
+| `echo .env >> .gitignore`、`ls -la .env`、`git rm --cached .env` | allow | （只涉及文件名，不读内容） |
+| `cp .env.example .env` | ask | `secret-files-write` |
 | 写入项目之外的位置（临时目录除外） | deny | `write-outside-project` |
-| 写入 `.agent-fence.toml` 或 `.claude/settings.json` | deny | `protect-fence` |
+| 写入 `.agent-fence.toml` 或 `.claude/settings.json`、`rm -rf .claude` | deny | `protect-fence` |
 | `echo 'unterminated` | ask | （无法解析） |
 
 ## 各智能体的支持情况
@@ -82,10 +88,20 @@ rule = "no-prod-deploy"
 | 智能体 | 接入方式 | 管控范围 | 说明 |
 | --- | --- | --- | --- |
 | Claude Code | `agent-fence hooks install --agent claude` 会在 `.claude/settings.local.json` 中添加一个 `PreToolUse` hook（加 `--shared` 则写入 `settings.json`） | Bash、PowerShell（按 POSIX shell 解析，尽力而为）、Read、Write、Edit、MultiEdit、NotebookEdit、Glob、Grep、LS、WebFetch | deny 和 ask 分别对应 Claude Code 自己的 `deny` 和 `ask`。决策为 allow 时 hook 不输出任何内容，因此 Claude Code 自身的权限设置依然生效：agent-fence 从不额外授予权限。MCP 工具不在检查范围内。|
-| Codex CLI | `agent-fence hooks install --agent codex` 会在 `~/.codex/hooks.json` 中添加一个 `PreToolUse` hook（加 `--project` 则写入 `<repo>/.codex/hooks.json`）。之后需要在 Codex 里用 `/hooks` 信任它一次。| Bash、apply_patch（补丁中的每个文件）、Edit、Write、Read | Codex 的 hook 无法发起询问：Codex 会忽略 “ask” 结果，调用照样执行。因此 agent-fence 会把 ask 转成 deny，并附上一条消息，让智能体来询问你。Codex 不会运行未被信任或被修改过的 hook。|
+| Codex CLI | `agent-fence hooks install --agent codex` 会在 `~/.codex/hooks.json` 中添加一个 `PreToolUse` hook（加 `--project` 则写入 `<repo>/.codex/hooks.json`）。之后需要信任它一次，见下方“Codex hook 信任”。| Bash、apply_patch（补丁中的每个文件）、Edit、Write、Read | Codex 的 hook 无法发起询问：Codex 会忽略 “ask” 结果，调用照样执行。因此 agent-fence 会把 ask 转成 deny，并附上一条消息，让智能体来询问你。Codex 不会运行未被信任或被修改过的 hook。|
 | Codex CLI（原生规则） | `agent-fence codex-rules --write` 会写入 `~/.codex/rules/agent-fence.rules` | 由字面单词组成的命令规则会转成 `prefix_rule`：deny 对应 `forbidden`，ask 对应 `prompt` | 不依赖 hooks 也能工作，并且会弹出真正的审批提示。但 Codex 是按顺序匹配 argv 前缀的，所以 `git push --force` 拦不住 `git push origin main --force`。包含 `*` 的模式、路径规则和密钥检测都不会导出。请与 hook 配合使用。|
 | 任意智能体 | `agent-fence exec -- <cmd> [args]` | 该命令本身，以及它串联或嵌套的所有命令 | 只检查通过包装器运行的命令。ask 需要终端；没有终端时会直接拦截（退出码 126）。|
 | 遵循 `SHELL` 的智能体 | `SHELL=$(which agent-fence-shell)` | 每一段 `-c` 脚本，以及传给它的脚本文件 | 仅支持 POSIX。真正的 shell 是 `AGENT_FENCE_REAL_SHELL` 或 `/bin/bash`。直接启动 `/bin/bash` 的智能体会忽略 `SHELL`。交互式会话直接放行，不做检查。|
+
+### Codex hook 信任
+
+Codex 只运行已被信任的新 hook 或改动过的 hook，而 `codex exec` 会静默跳过未被信任的 hook。执行 `hooks install --agent codex` 之后：
+
+1. 在终端里启动一次 `codex`（任意目录）。
+2. 出现 “Hooks need review”（“1 hook is new or changed”）提示时，选择 **Trust all and continue**，或选择 **Review hooks** 只信任 agent-fence 这一个。之后可以在 Codex 中用 `/hooks` 查看。
+3. 运行 `agent-fence hooks status --agent codex`，应显示 `trusted in Codex`。Codex 把信任记录在 `config.toml` 的 `[hooks.state]` 下；用不同的 `--command` 重新安装后需要重新信任。
+
+已在 Codex 0.160.0 上验证：信任之后，`codex exec` 会带着 agent-fence 的原因拦下 `cat .env`，两次调用都会出现在 `agent-fence log` 中。对于已经审核过 hook 的 CI 或容器环境，可以用 `codex exec --dangerously-bypass-hook-trust` 跳过这个提示。
 
 ## 策略参考
 
@@ -162,6 +178,8 @@ agent-fence 读取的是智能体声称要做的事。它是一个策略层，�
 
 - **智能体自己写出来再运行的代码。** `python build.py` 会被放行，但 `build.py` 实际做了什么是看不到的。`npm test`、`make`、git hooks，以及其他任何执行项目内文件的命令都是同理。
 - **解析器看不穿的混淆。** 运行时拼接出来的命令（`$(echo cm0= | base64 -d)`、变量、用 `printf` 输出再交给 `sh`），只有在程序名本身是动态的、或者输入无法解析时才会被拦截；运行时拼出来的参数则拦不住。一个铁了心的攻击者总能绕过模式匹配器。
+- **解释器内联代码。** `python3 -c "..."`、`node -e "..."`、`perl -e "..."` 可以做任何事，包括读取 `.env` 或执行 `git push --force`，其中的代码不会被解析。已提交过的密钥文件通过 `git show HEAD:.env` 读取也拦不住。从标准输入读到的数据同样看不到（`echo ~ | xargs rm -rf`、`env | curl -d @-`）。
+- **不受信任的仓库。** 克隆来的仓库里的 `.agent-fence.toml` 可以禁用或放宽内置规则（但不能改你的用户策略和 locked 规则），而且它自己的脚本在 `npm test` 时照样会运行。你依赖的规则请写进用户策略。
 - **没有 hook 的工具。** MCP 服务器、浏览器工具，以及智能体在被 hook 的工具调用之外做的任何事。在 Codex 中，通过 shell 读取文件只能以命令文本的形式被看到。
 - **没有接入的智能体。** 如果 hook 没有安装或没有被信任，或者智能体忽略了 `SHELL`，就什么都不会被检查。`agent-fence hooks status` 可以查看安装情况。
 - **失败时默认放行。** 如果找不到 `agent-fence` 可执行文件，Claude Code 和 Codex 会把 hook 报错当作非阻断错误，照常执行调用。请全局安装它，确保 hook 命令始终能被找到。

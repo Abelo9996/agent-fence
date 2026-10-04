@@ -132,16 +132,19 @@ export function handleHook(agent: "claude" | "codex", raw: string, env: NodeJS.P
   if (decision.action === "allow") return { stdout: null, decision };
 
   let permission: "deny" | "ask" = decision.action;
-  let reason = formatReason(decision);
+  let instruction = "";
   if (agent === "codex" && permission === "ask") {
     // Codex hooks cannot ask (an "ask" result is ignored and the call runs), so
     // ask becomes deny with an instruction to get the user's approval.
     permission = "deny";
-    reason += " Codex hooks cannot prompt, so this was blocked: ask the user to approve it and run it themselves, or to change the policy.";
+    instruction = "Codex hooks cannot prompt, so this was blocked: ask the user to approve it and run it themselves, or to change the policy.";
   }
   if (permission === "deny" && decision.action === "deny") {
-    reason += " Do not try to get around this with a different command; ask the user.";
+    instruction = "Do not try to get around this with a different command; ask the user.";
   }
+  let reason = formatReason(decision, instruction);
+  // Codex appends ". Command: ..." itself, so end without a period there.
+  if (agent === "codex") reason = reason.replace(/\.$/, "");
   const out = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: permission, permissionDecisionReason: reason } };
   return { stdout: JSON.stringify(out), decision };
 }

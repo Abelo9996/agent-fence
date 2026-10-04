@@ -30,14 +30,21 @@ reason = "Pushing publishes commits to a shared remote. Confirm with the user fi
 [[rules]]
 id = "git-discard-work"
 action = "ask"
-command = ["git reset --hard", "git clean -f", "git checkout -- .", "git restore .", "git stash drop", "git stash clear", "git branch -D"]
+command = [
+  "git reset --hard", "git clean -f", "git checkout -- .", "git checkout .", "git restore .", "git stash drop", "git stash clear", "git branch -D",
+  "git filter-branch", "git filter-repo", "git update-ref -d", "git reflog expire",
+]
 reason = "This discards uncommitted or unmerged work and cannot be undone with git. Confirm with the user first (snap-back can checkpoint the tree)."
 
 [[rules]]
 id = "git-rewrite-config"
 action = "ask"
-command = ["git config --global", "git config --system", "git remote set-url", "git remote add"]
-reason = "This changes git configuration or where code is pushed. Confirm with the user first."
+command = [
+  "git config --global", "git config --system", "git remote set-url", "git remote add",
+  "git config {alias.*,core.pager,core.editor,core.sshCommand,core.fsmonitor,core.hooksPath,diff.external,credential.helper,sequence.editor,gpg.program,filter.*}",
+  "git -c {alias.*,core.pager=*,core.editor=*,core.sshCommand=*,core.fsmonitor=*,core.hooksPath=*,diff.external=*,credential.helper=*,sequence.editor=*,gpg.program=*,filter.*}",
+]
+reason = "This changes git configuration, makes git run another command, or changes where code is pushed. Confirm with the user first."
 
 # ---------- destructive shell ----------
 
@@ -45,7 +52,7 @@ reason = "This changes git configuration or where code is pushed. Confirm with t
 id = "rm-root-or-home"
 action = "deny"
 command = "rm {-r,-R,--recursive} {/,/\\*,~,~/\\*,..,../\\*}"
-reason = "Recursive delete of the filesystem root, the home directory or the parent directory."
+reason = "Recursive delete of the filesystem root, the home directory, the project itself or a directory above it. Delete specific subdirectories instead, or ask the user."
 
 [[rules]]
 id = "disk-tools"
@@ -62,9 +69,16 @@ reason = "Runs with elevated privileges. Confirm with the user first."
 [[rules]]
 id = "pipe-to-shell"
 action = "ask"
-command = ["sh", "bash", "zsh", "dash", "ksh", "fish"]
+command = ["sh", "bash", "zsh", "dash", "ksh", "fish", "source", "."]
 piped_input = true
 reason = "Piping text into a shell runs code nobody reviewed (for example curl ... | sh). Download to a file and show it to the user first."
+
+[[rules]]
+id = "pipe-to-interpreter"
+action = "ask"
+command_regex = '^(\S*/)?(python[0-9.]*|node|nodejs|perl|ruby|php|deno|bun)( +-[A-Za-z]*)*( +-)?$'
+piped_input = true
+reason = "Piping text into an interpreter with no script runs code nobody reviewed (for example curl ... | python3). Download to a file and show it to the user first."
 
 [[rules]]
 id = "dynamic-command"
@@ -79,11 +93,17 @@ id = "package-install"
 action = "ask"
 command = [
   "npm {install,i,add,ci,uninstall,update}", "pnpm {install,i,add,remove,update}", "yarn {add,install,remove,upgrade}", "bun {install,i,add,remove}",
-  "pip install", "pip3 install", "pip uninstall", "uv pip install", "uv add", "pipx install", "poetry add", "conda install",
+  "pip install", "pip3 install", "pip uninstall", "python* -m pip {install,uninstall}", "uv pip install", "uv add", "pipx install", "poetry add", "conda install",
   "gem install", "cargo install", "cargo add", "go install", "go get",
   "brew install", "brew uninstall", "apt install", "apt-get install", "dnf install", "yum install", "pacman -S", "apk add", "winget install", "choco install", "scoop install",
 ]
-reason = "Installs or removes packages, which downloads and can run third-party code. Confirm with the user first."
+reason = "Installs or removes packages, which downloads and can run third-party code. Confirm the package name with the user first."
+
+[[rules]]
+id = "install-from-lockfile"
+action = "allow"
+command_regex = '^(\S*/)?((npm|pnpm|bun) (install|i|ci)|yarn( install)?|pip3? install( +-r +\S+| +-e +\.\S*| +\.)+|poetry install|uv sync|bundle install)( +--?[A-Za-z][-A-Za-z0-9]*(=\S*)?)*$'
+reason = "Installs the dependencies the project already declares (no new package names). Lifecycle scripts still run, as they would for the user."
 
 [[rules]]
 id = "publish-or-delete"
@@ -99,9 +119,18 @@ action = "deny"
 path = [
   "**/.env", "**/.env.*", "**/*.pem", "**/*.key", "**/*.p12", "**/*.pfx", "**/id_rsa*", "**/id_ed25519*", "**/id_ecdsa*",
   "**/.netrc", "**/.npmrc", "**/.pypirc", "**/.git-credentials", "**/credentials.json", "**/service-account*.json",
+  "**/.pgpass", "**/.htpasswd",
   "~/.ssh/**", "~/.aws/**", "~/.gnupg/**", "~/.kube/**", "~/.docker/config.json", "~/.config/gh/**", "~/.config/gcloud/**", "~/.azure/**",
+  "~/.*_history", "~/.local/share/fish/fish_history", "~/Library/Keychains/**", "~/.password-store/**", "~/.terraform.d/credentials.tfrc.json",
 ]
 reason = "This file usually holds credentials. Ask the user for the specific value you need instead of reading it."
+
+[[rules]]
+id = "secret-files-write"
+action = "ask"
+tool = "write"
+path = ["./**/.env", "./**/.env.*"]
+reason = "This writes an env file inside the project, which may replace credentials the user keeps there. Confirm with the user first."
 
 [[rules]]
 id = "env-examples"
@@ -138,14 +167,17 @@ id = "protect-fence"
 action = "deny"
 tool = "write"
 locked = true
-path = ["**/.agent-fence.toml", "**/agent-fence/policy.toml", "**/.claude/settings.json", "**/.claude/settings.local.json", "**/.codex/hooks.json", "**/.codex/config.toml", "**/.codex/rules/**", "**/.git/hooks/**"]
+path = [
+  "**/.agent-fence.toml", "**/agent-fence/policy.toml", "**/.claude", "**/.claude/settings.json", "**/.claude/settings.local.json",
+  "**/.codex", "**/.codex/hooks.json", "**/.codex/config.toml", "**/.codex/rules", "**/.codex/rules/**", "**/.git/hooks", "**/.git/hooks/**", "**/.git/config",
+]
 reason = "Agents may not change their own permission policy or hook configuration. Show the user the change you want instead."
 
 [[rules]]
 id = "protect-fence-cli"
 action = "deny"
 locked = true
-command = ["agent-fence hooks uninstall", "agent-fence init --force", "agent-fence init -f"]
+command = ["agent-fence hooks uninstall", "agent-fence hooks install --command*", "agent-fence init --force", "agent-fence init -f"]
 reason = "Agents may not turn off their own permission policy."
 `;
 

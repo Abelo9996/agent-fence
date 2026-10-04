@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { readAudit } from "../src/audit.js";
 import { redact } from "../src/secrets.js";
-import { cleanup, runCli, sandbox, SHELL, write } from "./helpers.js";
+import { cleanup, CLI, runCli, sandbox, SHELL, write } from "./helpers.js";
 import { spawnSync } from "node:child_process";
 
 afterEach(cleanup);
@@ -72,6 +72,21 @@ rule = "git-push"
     expect(runCli(["explain", "nope"], { cwd: root }).code).toBe(1);
     expect(runCli(["rules"], { cwd: root }).stdout).toMatch(/deny +git-force-push/);
   });
+
+  it("explain and check say how to change a decision", () => {
+    const { root } = sandbox();
+    const e = runCli(["explain", "secret-files"], { cwd: root }).stdout;
+    expect(e).toMatch(/disable = \["secret-files"\]/);
+    expect(e).toMatch(/action = "allow"/);
+    expect(runCli(["explain", "protect-fence"], { cwd: root }).stdout).toMatch(/project policy cannot change this rule/);
+    expect(runCli(["check", "--input", "cat .env"], { cwd: root }).stdout).toMatch(/change: +you can allow it/);
+  });
+
+  it.skipIf(process.platform === "win32")("does not crash when its output pipe closes early", () => {
+    const { root } = sandbox();
+    const r = spawnSync("sh", ["-c", `"${process.execPath}" "${CLI}" rules | head -1`], { cwd: root, encoding: "utf8", env: process.env });
+    expect(r.stderr).not.toMatch(/EPIPE/);
+  });
 });
 
 describe("audit log", () => {
@@ -100,6 +115,14 @@ describe("audit log", () => {
     expect(l.stdout).toMatch(/deny +claude +Bash/);
     expect(l.stdout).not.toMatch(/Read/);
     expect(runCli(["log", "--json"], { cwd: root }).stdout.trim().split("\n")).toHaveLength(2);
+    expect(l.stdout).toMatch(/agent-fence explain <rule>/);
+  });
+
+  it("explains an empty log", () => {
+    const { root } = sandbox();
+    const r = runCli(["log"], { cwd: root });
+    expect(r.stdout).toMatch(/No matching entries/);
+    expect(r.stdout).toMatch(/agent-fence check does not log/);
   });
 
   it("redacts common credential formats", () => {

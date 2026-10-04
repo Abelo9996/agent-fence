@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { parse as parseToml } from "smol-toml";
 import { homeDir } from "./paths.js";
 
 export type Agent = "claude" | "codex";
@@ -179,5 +180,25 @@ export function hookInstalled(target: HookTarget): boolean | string {
     return Object.values(s.hooks ?? {}).some((gs) => Array.isArray(gs) && gs.some((g) => g.hooks?.some(isOurs)));
   } catch (e) {
     return (e as Error).message;
+  }
+}
+
+/**
+ * Whether Codex has recorded trust for our PreToolUse hook in this hooks.json.
+ * Codex keeps it in config.toml as [hooks.state."<hooks.json>:pre_tool_use:<group>:<hook>"]
+ * with a trusted_hash; a changed entry needs trusting again, which this cannot verify.
+ */
+export function codexHookTrusted(target: HookTarget): boolean {
+  try {
+    const settings = readSettings(target.file);
+    const groups = settings.hooks?.PreToolUse ?? [];
+    const keys: string[] = [];
+    groups.forEach((g, gi) => (g.hooks ?? []).forEach((h, hi) => isOurs(h) && keys.push(`${target.file}:pre_tool_use:${gi}:${hi}`)));
+    if (!keys.length) return false;
+    const cfg = parseToml(readFileSync(path.join(codexHome(), "config.toml"), "utf8")) as { hooks?: { state?: Record<string, { trusted_hash?: unknown }> } };
+    const state = cfg.hooks?.state ?? {};
+    return keys.every((k) => typeof state[k]?.trusted_hash === "string");
+  } catch {
+    return false;
   }
 }

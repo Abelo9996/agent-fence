@@ -6,8 +6,8 @@ import { handleHook } from "./adapters.js";
 import { auditLogPath, parseSince, readAudit } from "./audit.js";
 import { exportCodexRules } from "./codex-rules.js";
 import { STARTER_POLICY } from "./defaults.js";
-import { evaluate, type Request } from "./engine.js";
-import { allHookTargets, hookInstalled, hookTarget, installHook, runningFromNpxCache, uninstallHook, type Agent } from "./hooks.js";
+import { evaluate, howToChange, type Request } from "./engine.js";
+import { allHookTargets, codexHookTrusted, hookInstalled, hookTarget, installHook, runningFromNpxCache, uninstallHook, type Agent } from "./hooks.js";
 import { PROJECT_POLICY, findProjectRoot, homeDir, normalizePath, userPolicyPath } from "./paths.js";
 import { loadPolicy, PolicyError, TOOLS, type Rule, type Tool } from "./policy.js";
 import { describeTest, runPolicyTests } from "./policy-tests.js";
@@ -15,6 +15,12 @@ import { VERSION } from "./version.js";
 import { runExec, runShell } from "./wrap.js";
 
 export const EXIT = { allow: 0, error: 1, ask: 2, deny: 3 } as const;
+
+// `agent-fence rules | head` closes the pipe early; that is not an error.
+process.stdout.on("error", (e: NodeJS.ErrnoException) => {
+  if (e.code === "EPIPE") process.exit(0);
+  throw e;
+});
 
 function fail(msg: string, code = 1): never {
   process.stderr.write(`agent-fence: ${msg}\n`);
@@ -43,6 +49,36 @@ function readStdin(): Promise<string> {
 
 function ruleLabel(r: Pick<Rule, "id" | "layer">): string {
   return `${r.id} (${r.layer === "builtin" ? "built-in" : r.layer})`;
+}
+
+/** Concrete steps for loosening or tightening one rule, shown by `explain`. */
+function changeHelp(r: Rule, root: string): string {
+  const projectFile = path.join(root, PROJECT_POLICY);
+  if (r.layer === "user") return `To change it, edit or remove it in your user policy: ${r.file}`;
+  if (r.layer === "project") return `To change it, edit or remove it in ${r.file}`;
+  const where = r.locked ? `your user policy (${userPolicyPath()}); a project policy cannot change this rule` : `${projectFile} (or your user policy, ${userPolicyPath()})`;
+  const example =
+    r.spec.command !== undefined || r.spec.command_regex !== undefined
+      ? `command = "<the exact command>"`
+      : r.spec.path !== undefined || r.spec.outside_project
+        ? `path = "<the file or glob>"`
+        : r.spec.url !== undefined
+          ? `url = "<the URL>"`
+          : `command = "<the exact command>"`;
+  const allowRule = r.action === "allow" ? "" : [
+    `To allow one specific case, add a more specific rule (the most specific match wins):`,
+    `  [[rules]]`,
+    `  id = "allow-${r.id}-case"`,
+    `  action = "allow"`,
+    `  ${example}`,
+    `  reason = "Why this case is fine."`,
+  ].join("\n");
+  return [
+    `To change it, add to ${where}:`,
+    `  disable = ["${r.id}"]        # top level, above any [[rules]]: turns it off`,
+    allowRule,
+    `Then check with: agent-fence check ... and agent-fence test`,
+  ].filter(Boolean).join("\n");
 }
 
 function matcherText(r: Rule): string {
@@ -100,6 +136,8 @@ cli
       if (d.pattern) process.stdout.write(`  matched: ${d.pattern}\n`);
       if (d.subject) process.stdout.write(`  subject: ${d.subject}\n`);
       process.stdout.write(`  reason:  ${d.reason}\n`);
+      const change = d.action === "allow" ? "" : howToChange(d);
+      if (change) process.stdout.write(`  change:  ${change.replace(/^If it is intended, the user can /, "you can ")}\n`);
     }
     process.exit(EXIT[d.action]);
   });
@@ -146,6 +184,7 @@ cli.command("explain <rule-id>", "Show where a rule comes from, what it matches 
     process.stdout.write(`  reason:   ${r.reason}\n`);
     process.stdout.write(`  source:   ${r.layer === "builtin" ? "built-in defaults" : r.file}${r.locked ? " (locked: a project policy cannot change it)" : ""}\n`);
     if (r.priority) process.stdout.write(`  priority: ${r.priority}\n`);
+    process.stdout.write(`\n${changeHelp(r, p.root)}\n`);
   } else {
     process.stdout.write(`${id} is not active.\n`);
   }
@@ -212,7 +251,11 @@ cli
       return;
     }
     if (!shown.length) {
-      process.stdout.write(`No matching entries in ${auditLogPath()}${o.all ? "" : " for this project (try --all)"}\n`);
+      process.stdout.write(`No matching entries in ${auditLogPath()}${o.all ? "" : " for this project (try --all)"}.\n`);
+      process.stdout.write(
+        "Entries are written when an agent hook, agent-fence exec or agent-fence-shell checks a call; agent-fence check does not log.\n" +
+          "Check what is wired up with: agent-fence hooks status --agent claude (or codex)\n",
+      );
       return;
     }
     for (const e of shown) {
@@ -220,6 +263,9 @@ cli
       const input = e.input.replace(/\s+/g, " ");
       process.stdout.write(`${t}  ${e.action.padEnd(5)} ${e.source.padEnd(6)} ${(e.agentTool ?? e.tool).padEnd(10)} ${input.length > 80 ? input.slice(0, 77) + "..." : input}`);
       process.stdout.write(e.action === "allow" ? "\n" : `  [${e.rule}]\n`);
+    }
+    if (shown.some((e) => e.action !== "allow")) {
+      process.stdout.write(`\nWhy a rule fired: agent-fence explain <rule>. Full entries: agent-fence log --json\n`);
     }
   });
 
@@ -247,7 +293,10 @@ cli
         }
         if (agent === "codex") {
           process.stdout.write(
-            "Codex runs a new hook only after you trust it: start codex, run /hooks, review the agent-fence hook and trust it.\n" +
+            "Next: Codex skips a new or changed hook until you trust it, and codex exec skips it silently.\n" +
+              "  Start codex in a terminal once; at the \"Hooks need review\" prompt choose \"Trust all and continue\"\n" +
+              "  (or \"Review hooks\" to trust only this one; /hooks shows them later).\n" +
+              "  agent-fence hooks status --agent codex then shows whether Codex recorded the trust.\n" +
               "Codex hooks cannot prompt, so ask rules block with a message telling the agent to ask you.\n",
           );
         }
@@ -261,6 +310,14 @@ cli
         for (const t of allHookTargets(agent, root)) {
           const s = hookInstalled(t);
           process.stdout.write(`${t.scope.padEnd(8)} ${s === true ? "installed    " : s === false ? "not installed" : "error        "} ${t.file}${typeof s === "string" ? `: ${s}` : ""}\n`);
+          if (agent === "codex" && s === true) {
+            const trusted = codexHookTrusted(t);
+            process.stdout.write(
+              trusted
+                ? `         trusted in Codex (Codex asks again if the hook entry changes)\n`
+                : `         NOT trusted in Codex yet, so Codex skips it: start codex in a terminal and choose "Trust all and continue" at the "Hooks need review" prompt\n`,
+            );
+          }
         }
       } else {
         fail(`unknown hooks action "${action}"; use install, uninstall or status`);

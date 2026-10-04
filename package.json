@@ -1,6 +1,6 @@
 {
   "name": "@abelo9996/agent-fence",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "One permission policy for every coding agent.",
   "type": "module",
   "exports": {

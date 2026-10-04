@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { handleHook, parseApplyPatch } from "../src/adapters.js";
 import { exportCodexRules } from "../src/codex-rules.js";
-import { hookInstalled, hookTarget, installHook, uninstallHook, CLAUDE_MATCHER } from "../src/hooks.js";
+import { codexHookTrusted, hookInstalled, hookTarget, installHook, uninstallHook, CLAUDE_MATCHER } from "../src/hooks.js";
 import { loadPolicy } from "../src/policy.js";
 import { cleanup, sandbox } from "./helpers.js";
 
@@ -174,5 +174,22 @@ describe("hook installation", () => {
     const s = JSON.parse(readFileSync(t.file, "utf8"));
     expect(s.hooks.PreToolUse[0].matcher).toContain("apply_patch");
     expect(s.hooks.PreToolUse[0].hooks[0].command).toBe("agent-fence hook codex");
+  });
+
+  it("reports whether Codex has recorded trust for the hook", () => {
+    const { home, root } = sandbox();
+    const t = hookTarget("codex", root);
+    installHook(t, "agent-fence");
+    expect(codexHookTrusted(t)).toBe(false);
+    // the shape Codex 0.160 writes after "Trust all and continue"
+    writeFileSync(path.join(home, ".codex", "config.toml"), `[hooks.state]\n\n[hooks.state."${t.file.replace(/\\/g, "\\\\")}:pre_tool_use:0:0"]\ntrusted_hash = "sha256:abc"\n`);
+    expect(codexHookTrusted(t)).toBe(true);
+  });
+
+  it("ends the Codex reason without a period, since Codex appends its own", () => {
+    const { root } = sandbox();
+    const r = JSON.parse(handleHook("codex", payload(root, "Bash", { command: "cat .env" }), {}).stdout!).hookSpecificOutput.permissionDecisionReason;
+    expect(r).not.toMatch(/\.$/);
+    expect(r).toMatch(/agent-fence explain secret-files/);
   });
 });

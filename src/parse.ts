@@ -39,6 +39,13 @@ const MAX_DEPTH = 8;
 
 /** Marker inserted into a word where a $( ) or backtick substitution was. */
 export const SUBST = "$(...)";
+/** Marker inserted where a <( ) or >( ) process substitution was (a path to another command's output). */
+export const PROC_SUBST = "<(...)";
+
+/** True when a word contains a substitution marker, so its value is only known at run time. */
+export function hasSubst(word: string): boolean {
+  return word.includes(SUBST) || word.includes(PROC_SUBST);
+}
 
 interface RawCommand {
   words: string[];
@@ -46,18 +53,25 @@ interface RawCommand {
   bare: boolean[];
   redirects: Redirect[];
   pipedInput: boolean;
+  /** Set by finish() when this command is a shell that reads its script from stdin (bash <<EOF). */
+  stdinShell?: string;
 }
 
 class Parser {
   i = 0;
   out: SimpleCommand[] = [];
   error?: string;
-  pendingHeredocs: { delim: string; strip: boolean }[] = [];
+  pendingHeredocs: { delim: string; strip: boolean; owner: RawCommand }[] = [];
+  /** Shell variables assigned earlier in the script (x=value), substituted into later words. */
+  vars: Map<string, string>;
   constructor(
     readonly s: string,
     readonly depth: number,
     readonly via: string[],
-  ) {}
+    vars?: Map<string, string>,
+  ) {
+    this.vars = new Map(vars ?? []);
+  }
 
   fail(msg: string) {
     if (!this.error) this.error = msg;
@@ -77,7 +91,7 @@ class Parser {
         const op = redirectOp;
         redirectOp = null;
         if (op === "<<" || op === "<<-") {
-          this.pendingHeredocs.push({ delim: word, strip: op === "<<-" });
+          this.pendingHeredocs.push({ delim: word, strip: op === "<<-", owner: cmd });
         } else if (!((op === ">&" || op === "<&") && /^(\d+|-)$/.test(word))) {
           cmd.redirects.push({ op, target: word });
         }
@@ -181,7 +195,7 @@ class Parser {
       if ((c === "<" || c === ">") && s[this.i + 1] === "(" && word === null) {
         this.i += 2;
         this.sub(")", c + "()");
-        add(SUBST);
+        add(PROC_SUBST);
         continue;
       }
       if (c === "(") {
@@ -347,7 +361,7 @@ class Parser {
     if (this.depth >= MAX_DEPTH) {
       this.fail("nesting too deep");
     }
-    const child = new Parser(this.s, this.depth + 1, [...this.via, label]);
+    const child = new Parser(this.s, this.depth + 1, [...this.via, label], this.vars);
     child.i = this.i;
     child.parseList(stop);
     this.i = child.i;
@@ -378,7 +392,7 @@ class Parser {
       this.fail("nesting too deep");
       return;
     }
-    const child = new Parser(script, this.depth + 1, [...this.via, label]);
+    const child = new Parser(script, this.depth + 1, [...this.via, label], this.vars);
     child.parseList();
     this.out.push(...child.out);
     if (child.error) this.fail(child.error);
@@ -386,7 +400,8 @@ class Parser {
 
   readHeredocs() {
     while (this.pendingHeredocs.length) {
-      const { delim, strip } = this.pendingHeredocs.shift()!;
+      const { delim, strip, owner } = this.pendingHeredocs.shift()!;
+      const body: string[] = [];
       for (;;) {
         if (this.i >= this.s.length) {
           this.fail(`unterminated heredoc ${delim}`);
@@ -398,19 +413,60 @@ class Parser {
         this.i = Math.min(nl + 1, this.s.length);
         if (strip) line = line.replace(/^\t+/, "");
         if (line.replace(/\r$/, "") === delim) break;
+        body.push(line);
       }
+      // `bash <<EOF ... EOF` runs the heredoc body as a script.
+      if (owner.stdinShell) this.nested(body.join("\n"), `${owner.stdinShell} <<`);
     }
   }
 
+  /** Substitute variables assigned earlier in the script and split on $IFS, the way the shell would. */
+  expandWords(raw: RawCommand): string[] {
+    const out: string[] = [];
+    raw.words.forEach((w, idx) => {
+      const whole = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})$/.exec(w);
+      const name = whole ? (whole[1] ?? whole[2]) : undefined;
+      if (name !== undefined && raw.bare[idx] && this.vars.has(name)) {
+        // an unquoted $x is split into words
+        out.push(...this.vars.get(name)!.split(/\s+/).filter(Boolean));
+        return;
+      }
+      let v = w.replace(/\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})/g, (m, a, b) => {
+        const n = a ?? b;
+        return this.vars.has(n) ? this.vars.get(n)! : m;
+      });
+      // $IFS expands to whitespace, which separates words.
+      if (/\$(IFS\b|\{IFS\})/.test(v)) {
+        out.push(...v.split(/\$(?:IFS\b|\{IFS\})/).filter(Boolean));
+        return;
+      }
+      out.push(v);
+    });
+    return out;
+  }
+
   finish(raw: RawCommand) {
+    const words = this.expandWords(raw);
     const env: string[] = [];
     let k = 0;
-    while (k < raw.words.length && /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(raw.words[k])) {
-      env.push(raw.words[k].split("=")[0].replace(/\+$/, ""));
+    while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(words[k])) {
+      env.push(words[k].split("=")[0].replace(/\+$/, ""));
       k++;
     }
-    const argv = raw.words.slice(k);
+    const argv = words.slice(k);
+    // Remember plain assignments (x=1, export x=1) so later $x can be resolved.
+    const assigns = argv.length === 0 ? words : /^(export|declare|typeset|local|readonly)$/.test(argv[0] ?? "") ? argv.slice(1) : [];
+    for (const a of assigns) {
+      const m = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(a);
+      if (m) this.vars.set(m[1], m[2]);
+    }
     this.emit(argv, raw.redirects, env, raw.pipedInput, this.via);
+    // A shell with no script argument reads its script from stdin: check here-strings and heredocs too.
+    const shell = stdinShell(argv);
+    if (shell) {
+      raw.stdinShell = shell;
+      for (const r of raw.redirects) if (r.op === "<<<") this.nested(r.target, `${shell} <<<`);
+    }
   }
 
   emit(argv: string[], redirects: Redirect[], env: string[], pipedInput: boolean, via: string[]) {
@@ -421,7 +477,7 @@ class Parser {
       env,
       pipedInput,
       via,
-      dynamic: argv.length > 0 && /[$`]/.test(argv[0]),
+      dynamic: argv.length > 0 && (/[$`]/.test(argv[0]) || argv[0].includes(PROC_SUBST)),
     });
     if (!argv.length) return;
     if (via.length > MAX_DEPTH) {
@@ -433,13 +489,32 @@ class Parser {
       if (inner.argv.length) this.emit(inner.argv, [], [...env, ...inner.env], pipedInput, [...via, prog]);
       return;
     }
-    if (SHELLS.has(prog)) {
-      const script = shellScript(argv);
+    if (SHELLS.has(prog) || prog === "source" || prog === ".") {
+      const script = SHELLS.has(prog) ? shellScript(argv) : null;
       if (script !== null) this.nested(script, `${prog} -c`);
+      else {
+        // `bash <(curl ...)` and `source <(curl ...)` run another command's output as a script.
+        const first = argv.slice(1).find((a) => !/^[-+]/.test(a));
+        if (first !== undefined && first.includes(PROC_SUBST)) this.out[this.out.length - 1].pipedInput = true;
+      }
       return;
     }
     if (prog === "eval") {
       this.nested(argv.slice(1).join(" "), "eval");
+      return;
+    }
+    if (prog === "alias") {
+      // alias gp='git push --force' makes gp run that text
+      for (const a of argv.slice(1)) {
+        const eq = a.indexOf("=");
+        if (eq > 0) this.nested(a.slice(eq + 1), "alias");
+      }
+      return;
+    }
+    const run = runnerInner(prog, argv);
+    if (run) {
+      if (run.script !== undefined) this.nested(run.script, `${prog} -c`);
+      else if (run.argv.length) this.emit(run.argv, [], env, pipedInput, [...via, prog]);
       return;
     }
     if (prog === "find") {
@@ -462,6 +537,68 @@ export function programName(word: string): string {
   p = p.slice(p.lastIndexOf("/") + 1);
   if (/\.(exe|cmd|bat)$/i.test(p)) p = p.replace(/\.(exe|cmd|bat)$/i, "").toLowerCase();
   return p;
+}
+
+/**
+ * If argv (after wrappers such as sudo) is a shell that reads its script from
+ * stdin, that shell's name; else null.
+ */
+function stdinShell(argv: string[]): string | null {
+  let a = argv;
+  for (let n = 0; n < MAX_DEPTH && a.length; n++) {
+    const prog = programName(a[0]);
+    const inner = unwrap(prog, a);
+    if (inner) {
+      a = inner.argv;
+      continue;
+    }
+    if (!SHELLS.has(prog) || shellScript(a) !== null) return null;
+    return a.slice(1).every((x) => /^[-+]/.test(x)) ? prog : null;
+  }
+  return null;
+}
+
+/** Package runners that run another program: npx tsc, npm exec -- x, uv run pytest. */
+const RUNNERS: Record<string, { sub?: string[]; valued: string[]; script?: string[] }> = {
+  npx: { valued: ["-p", "--package"], script: ["-c", "--call"] },
+  pnpx: { valued: ["-p", "--package"], script: ["-c", "--call"] },
+  bunx: { valued: ["-p", "--package"] },
+  uvx: { valued: ["--from", "--with", "--python", "-p"] },
+  npm: { sub: ["exec", "x"], valued: ["-p", "--package", "-w", "--workspace"], script: ["-c", "--call"] },
+  pnpm: { sub: ["exec", "dlx"], valued: ["-p", "--package", "-C", "--dir", "--filter", "-F"], script: ["-c"] },
+  yarn: { sub: ["exec", "dlx"], valued: ["-p", "--package"] },
+  bun: { sub: ["x"], valued: ["-p", "--package"] },
+  uv: { sub: ["run"], valued: ["--with", "--python", "-p", "--project", "--directory", "--package", "--env-file", "--extra", "--group", "--index", "--from"] },
+  poetry: { sub: ["run"], valued: ["-C", "--directory", "-P", "--project"] },
+  pipenv: { sub: ["run"], valued: [] },
+  bundle: { sub: ["exec"], valued: [] },
+  pipx: { sub: ["run"], valued: ["--spec", "--python"] },
+};
+
+/** For a package runner, the command it runs (or a -c script); else null. */
+function runnerInner(prog: string, argv: string[]): { argv: string[]; script?: string } | null {
+  const spec = RUNNERS[prog];
+  if (!spec) return null;
+  let j = 1;
+  if (spec.sub) {
+    // npm exec / uv run: skip global options before the subcommand
+    while (j < argv.length && argv[j].startsWith("-")) j++;
+    if (!spec.sub.includes(argv[j] ?? "")) return null;
+    j++;
+  }
+  while (j < argv.length) {
+    const a = argv[j];
+    if (a === "--") {
+      j++;
+      break;
+    }
+    if (!a.startsWith("-") || a.length === 1) break;
+    const name = a.includes("=") ? a.slice(0, a.indexOf("=")) : a;
+    if (spec.script?.includes(name)) return { argv: [], script: a.includes("=") ? a.slice(a.indexOf("=") + 1) : (argv[j + 1] ?? "") };
+    j++;
+    if (spec.valued.includes(name) && !a.includes("=")) j++;
+  }
+  return { argv: argv.slice(j) };
 }
 
 /** For `bash -c 'script'`-style invocations, the script; else null. */
@@ -505,13 +642,12 @@ const WRAPPERS: Record<string, { valued: string[]; positional?: number }> = {
   chronic: { valued: [] },
   unbuffer: { valued: [] },
   watch: { valued: ["-n", "-d", "--interval"] },
-  npx: { valued: [] },
 };
 
 /** If argv runs another command (sudo rm ...), the inner command. */
 function unwrap(prog: string, argv: string[]): { argv: string[]; env: string[] } | null {
   const spec = WRAPPERS[prog];
-  if (!spec || prog === "npx") return null;
+  if (!spec) return null;
   const env: string[] = [];
   let j = 1;
   let positional = spec.positional ?? 0;

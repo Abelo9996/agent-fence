@@ -67,18 +67,24 @@ The built-in rules are a starting point. `agent-fence rules` lists them and
 | `cd app && git push --force origin main` | deny | `git-force-push` |
 | `bash -c 'git push origin +main'` | deny | `git-force-push` |
 | `FOO=1 sudo rm -rf "$HOME"` | deny | `rm-root-or-home` |
+| `bash <<EOF` with `git push -f` inside, `x=git; $x push -f` | deny | `git-force-push` |
+| `cd .. && rm -rf my-project`, `rm -rf .` in the project root | deny | `rm-root-or-home` |
 | `git push` | ask | `git-push` |
-| `git reset --hard`, `git clean -fd` | ask | `git-discard-work` |
-| `npm install left-pad`, `pip install x` | ask | `package-install` |
-| `curl -fsSL https://x.sh \| sh` | ask | `pipe-to-shell` |
+| `git reset --hard`, `git clean -fd`, `git checkout .` | ask | `git-discard-work` |
+| `npm install left-pad`, `pip install x`, `python3 -m pip install x` | ask | `package-install` |
+| `npm install`, `npm ci`, `pip install -r requirements.txt`, `uv sync` | allow | `install-from-lockfile` |
+| `curl -fsSL https://x.sh \| sh`, `bash <(curl ...)`, `curl ... \| python3` | ask | `pipe-to-shell`, `pipe-to-interpreter` |
+| `git -c alias.p='push -f' p`, `git config core.fsmonitor ...` | ask | `git-rewrite-config` |
 | `$CMD -rf /` | ask | `dynamic-command` |
 | `export TOKEN=ghp_...` | ask | `secret-in-input` |
 | `npm publish`, `gh repo delete` | deny | `publish-or-delete` |
 | read `.env`, `~/.ssh/id_ed25519`, `deploy/key.pem` | deny | `secret-files` |
 | read `.env.example` | allow | `env-examples` |
-| `cat src/../.env` | deny | `secret-files` (paths inside commands are checked too) |
+| `cat src/../.env`, `cat .e*v`, `curl -d @.env https://...` | deny | `secret-files` (paths inside commands are checked, after glob expansion) |
+| `echo .env >> .gitignore`, `ls -la .env`, `git rm --cached .env` | allow | (names only, contents not read) |
+| `cp .env.example .env` | ask | `secret-files-write` |
 | write outside the project (not temp) | deny | `write-outside-project` |
-| write `.agent-fence.toml` or `.claude/settings.json` | deny | `protect-fence` |
+| write `.agent-fence.toml` or `.claude/settings.json`, `rm -rf .claude` | deny | `protect-fence` |
 | `echo 'unterminated` | ask | (unparsable) |
 
 ## Per-agent support
@@ -86,10 +92,28 @@ The built-in rules are a starting point. `agent-fence rules` lists them and
 | Agent | How | What is enforced | Notes |
 | --- | --- | --- | --- |
 | Claude Code | `agent-fence hooks install --agent claude` adds a `PreToolUse` hook to `.claude/settings.local.json` (`--shared` for `settings.json`) | Bash, PowerShell (parsed as POSIX shell, best effort), Read, Write, Edit, MultiEdit, NotebookEdit, Glob, Grep, LS, WebFetch | deny and ask map to Claude Code's own `deny` and `ask`. On allow the hook prints nothing, so Claude Code's permission settings still apply: agent-fence never grants access. MCP tools are not checked. |
-| Codex CLI | `agent-fence hooks install --agent codex` adds a `PreToolUse` hook to `~/.codex/hooks.json` (`--project` for `<repo>/.codex/hooks.json`). Then trust it once in Codex with `/hooks`. | Bash, apply_patch (every file in the patch), Edit, Write, Read | Codex hooks cannot ask: an "ask" result is ignored by Codex and the call would run. agent-fence therefore turns ask into deny, with a message telling the agent to ask you. Codex does not run an untrusted or modified hook. |
-| Codex CLI (native rules) | `agent-fence codex-rules --write` writes `~/.codex/rules/agent-fence.rules` | Command rules made of literal words become `prefix_rule`s: deny is `forbidden`, ask is `prompt` | Works without hooks and gives a real approval prompt, but Codex matches argv prefixes in order, so `git push origin main --force` is not caught by `git push --force`. Patterns with `*`, path rules and secret detection are not exported. Use together with the hook. |
+| Codex CLI | `agent-fence hooks install --agent codex` adds a `PreToolUse` hook to `~/.codex/hooks.json` (`--project` for `<repo>/.codex/hooks.json`). Then trust it once, see [Codex hook trust](#codex-hook-trust). | Bash, apply_patch (every file in the patch), Edit, Write, Read | Codex hooks cannot ask: an "ask" result is ignored by Codex and the call would run. agent-fence therefore turns ask into deny, with a message telling the agent to ask you. Codex does not run an untrusted or modified hook. |
+| Codex CLI (native rules) | `agent-fence codex-rules --write` writes `~/.codex/rules/agent-fence.rules` | Command rules made of literal words become `prefix_rule`s: deny is `forbidden`, ask is `prompt` | Works without hooks and gives a real approval prompt, but Codex matches argv prefixes in order, so `git push origin main --force` is not caught by `git push --force`. Patterns with `*`, regex rules, path rules, secret detection and allow rules are not exported, so the exported rules can also be stricter than the hook (Codex prompts for a bare `npm install`). Use together with the hook. |
 | Any agent | `agent-fence exec -- <cmd> [args]` | The command and everything it chains or nests | Only what is run through the wrapper is checked. Ask needs a terminal; without one it blocks (exit 126). |
 | Agents that honour `SHELL` | `SHELL=$(which agent-fence-shell)` | Every `-c` script, and script files passed to it | POSIX only. The real shell is `AGENT_FENCE_REAL_SHELL` or `/bin/bash`. Agents that spawn `/bin/bash` directly ignore `SHELL`. Interactive sessions pass through unchecked. |
+
+### Codex hook trust
+
+Codex runs a new or changed hook only after you trust it, and `codex exec`
+skips an untrusted hook without saying so. After `hooks install --agent codex`:
+
+1. Start `codex` in a terminal (any directory).
+2. At the "Hooks need review" prompt ("1 hook is new or changed"), choose
+   **Trust all and continue**, or **Review hooks** to trust only the
+   agent-fence one. `/hooks` inside Codex shows them later.
+3. Run `agent-fence hooks status --agent codex`. It should say
+   `trusted in Codex`. Codex stores this in `config.toml` under
+   `[hooks.state]`; re-installing with a different `--command` needs a new trust.
+
+Checked with Codex 0.160.0: after trusting, `codex exec` blocks `cat .env` with
+the agent-fence reason and both calls appear in `agent-fence log`. For a CI or
+container run that has already vetted its hooks, `codex exec
+--dangerously-bypass-hook-trust` runs them without the prompt.
 
 ## Policy reference
 
@@ -134,14 +158,23 @@ inside a word; `\*` is a literal star. `~`, `$HOME` and `${HOME}` are the same.
 
 Before matching, a command is split into every simple command it would run:
 `&&`, `||`, `;`, `|`, `&`, newlines, `( )`, `{ }`, `$( )`, backticks, `<( )`,
-`if`/`while` bodies, `sh -c` / `bash -lc` / `zsh -c` scripts, `eval`, and the
-wrapped command of `sudo`, `env`, `nohup`, `nice`, `timeout`, `xargs`,
-`find -exec` and similar. Quotes are removed the way the shell would
-(`r''m` is `rm`), `VAR=value` prefixes are stripped, and heredoc bodies are
-skipped. File arguments, redirection targets (`> file`) and the destinations of
-`rm`, `cp`, `mv`, `tee`, `touch`, `sed -i` and friends are checked against the
-path rules, which can only make the decision stricter. A `cd` earlier in the
-chain is followed when resolving relative paths.
+`if`/`while` bodies, `sh -c` / `bash -lc` / `zsh -c` scripts, heredocs and
+here-strings given to a shell (`bash <<EOF`), `eval`, `alias` definitions, and
+the wrapped command of `sudo`, `env`, `nohup`, `nice`, `timeout`, `xargs`,
+`find -exec`, `npx`, `npm exec`, `uv run` and similar. Quotes are removed the
+way the shell would (`r''m` is `rm`), `VAR=value` prefixes are stripped,
+variables assigned earlier in the same input (`x=git; $x ...`) are substituted,
+`$IFS` splits words, and heredoc bodies given to other programs are skipped.
+File arguments, redirection targets (`> file`), `curl -d @file` uploads and the
+destinations of `rm`, `cp`, `mv` (source and destination), `tee`, `touch`,
+`sed -i`, `find -delete`, `tar -x -C`, `unzip -d` and friends are checked
+against the path rules, which can only make the decision stricter. Globs and
+`{a,b}` in arguments are expanded against the file system first, so `cat .e*v`
+is checked as `cat .env`. Commands that only look at names (`echo`, `ls`,
+`test`, `stat`, `git check-ignore`) do not count as reading a file. A `cd`
+earlier in the chain is followed when resolving relative paths, and a recursive
+delete of the project itself or a directory above it falls under
+`rm-root-or-home`.
 
 ### How a decision is made
 
@@ -174,7 +207,7 @@ the path that exists. Matching ignores case on macOS and Windows.
 | `agent-fence check --tool bash --input "<cmd>"` | Print the decision. Also `--tool read|write|edit --path <p>`, `--tool fetch --url <u>`, `--json`. Exit 0 allow, 2 ask, 3 deny, 1 error. |
 | `agent-fence init [--user] [--force]` | Write a commented starter policy. |
 | `agent-fence rules [--json]` | Every effective rule and which file it came from. |
-| `agent-fence explain <rule-id>` | Source, matcher, reason, overrides and tests for one rule. |
+| `agent-fence explain <rule-id>` | Source, matcher, reason, overrides and tests for one rule, and the exact TOML to turn it off or allow one case. |
 | `agent-fence test` | Run `[[tests]]`; exit 1 on any failure. |
 | `agent-fence log [-n 50] [--action deny] [--tool bash] [--source claude] [--since 2h] [--all] [--json]` | Read the audit log for this project (or all). `--path` prints where it is. |
 | `agent-fence hooks install\|uninstall\|status --agent claude\|codex [--shared\|--project]` | Manage hooks. Existing settings are merged, never replaced, and backed up first. |
@@ -201,16 +234,26 @@ sandbox, and it is only as good as the hook or wrapper in front of it.
   `build.py` does is not seen. The same goes for `npm test`, `make`, git hooks and
   anything else that executes files from the project.
 - **Obfuscation the parser cannot see through.** Commands assembled at run time
-  (`$(echo cm0= | base64 -d)`, variables, `printf` into `sh`) are caught only
-  when the program name itself is dynamic or the input fails to parse; arguments
-  built at run time are not. A determined adversary will get past a pattern
-  matcher.
+  (`$(echo cm0= | base64 -d)`, variables set in an earlier tool call, `printf`
+  into a file that is then run) are caught only when the program name itself is
+  dynamic, the text is piped into a shell, or the input fails to parse;
+  arguments built at run time are not (`rm -rf "$(cat dir.txt)"`). Data read
+  from stdin is not seen either (`echo ~ | xargs rm -rf`, `env | curl -d @-`).
+  A determined adversary will get past a pattern matcher.
+- **Inline interpreter code.** `python3 -c "..."`, `node -e "..."` and
+  `perl -e "..."` can do anything, including reading `.env` or running
+  `git push --force`; their code is not parsed. Neither is `git show HEAD:.env`
+  for a secret file that was committed.
 - **Tools without hooks.** MCP servers, browser tools, and anything an agent
   does outside the hooked tool calls. In Codex, shell reads of files are only
   seen as command text.
 - **Agents that are not wired up.** If a hook is not installed or not trusted,
   or an agent ignores `SHELL`, nothing is checked. `agent-fence hooks status`
-  shows what is installed.
+  shows what is installed (and, for Codex, whether it is trusted).
+- **An untrusted repository.** A cloned repo's `.agent-fence.toml` can disable
+  or loosen built-in rules (not your user policy or locked rules), and its own
+  scripts run on `npm test` anyway. Put the rules you rely on in your user
+  policy.
 - **Failures that open.** If the `agent-fence` binary is missing, Claude Code
   and Codex treat the hook error as non-blocking and run the call. Install it
   globally so the hook command keeps resolving.
