@@ -80,7 +80,7 @@ describe("evasion attempts found in review", () => {
     const name = path.basename(root);
     expect(bash(root, `cd .. && rm -rf ${name}`).rule).toBe("rm-root-or-home");
     expect(bash(root, "rm -rf .").rule).toBe("rm-root-or-home");
-    expect(bash(root, `rm -rf ${root}`).rule).toBe("rm-root-or-home");
+    expect(bash(root, `rm -rf ${root.replace(/\\/g, "/")}`).rule).toBe("rm-root-or-home");
     expect(bash(root, "rm -rf .git").rule).toBe("git-discard-work");
     expect(bash(root, "rm -rf build dist node_modules .next").action).toBe("allow");
     mkdirSync(path.join(root, "sub"));
