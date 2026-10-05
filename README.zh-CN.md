@@ -25,6 +25,8 @@ agent-fence log                                # what your agents tried in this 
 
 需要 Node 20 或更高版本。没有原生依赖。
 
+Homebrew（macOS 和 Linux）：`brew install abelo9996/tap/agent-fence` 会安装 `agent-fence` 和 `agent-fence-shell`。
+
 ## 策略示例
 
 ```toml

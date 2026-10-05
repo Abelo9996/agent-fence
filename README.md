@@ -28,6 +28,8 @@ agent-fence log                                # what your agents tried in this 
 
 Requires Node 20 or newer. No native dependencies.
 
+Homebrew (macOS and Linux): `brew install abelo9996/tap/agent-fence` installs `agent-fence` and `agent-fence-shell`.
+
 ## Example policy
 
 ```toml
