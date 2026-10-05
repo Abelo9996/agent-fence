@@ -83,8 +83,8 @@ runs:
         echo "agent-fence $AF_VERSION: test --policy $AF_POLICY"
         # strict and AF_ARGS are split on whitespace on purpose.
         # shellcheck disable=SC2086
-        npx --yes --package "$spec" -- agent-fence test --policy "$AF_POLICY" --json $strict $AF_ARGS >"$result" 2>"$errors"
-        code=$?
+        code=0
+        npx --yes --package "$spec" -- agent-fence test --policy "$AF_POLICY" --json $strict $AF_ARGS >"$result" 2>"$errors" || code=$?
         # The job is failed by the next step, so the outputs are kept even when tests fail.
         node "$GITHUB_ACTION_PATH/action/summary.mjs" "$result" "$errors" "$code" "$AF_POLICY" || true
 
