@@ -5,5 +5,6 @@ export { handleHook, requestsFor, parseApplyPatch } from "./adapters.js";
 export { installHook, uninstallHook, hookTarget, hookInstalled } from "./hooks.js";
 export { exportCodexRules } from "./codex-rules.js";
 export { runPolicyTests } from "./policy-tests.js";
+export { lintPolicy, untestedRules, type LintReport, type ShadowedRule } from "./lint.js";
 export { redact, findSecrets } from "./secrets.js";
 export { normalizePath } from "./paths.js";

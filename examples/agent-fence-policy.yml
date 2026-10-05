@@ -1,0 +1,31 @@
+# Copy to .github/workflows/agent-fence.yml in your repository.
+# Runs the [[tests]] in .agent-fence.toml on every pull request and push to main,
+# writes a job summary, and fails the job when a test fails or a rule is shadowed.
+name: agent-fence policy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check the agent-fence policy
+        id: fence
+        uses: Abelo9996/agent-fence@v0
+        with:
+          policy: .agent-fence.toml
+          fail-on-shadowed: true
+      - name: Use the outputs in a later step
+        if: always()
+        env:
+          PASSED: ${{ steps.fence.outputs.passed }}
+          FAILED: ${{ steps.fence.outputs.failed }}
+          UNTESTED: ${{ steps.fence.outputs.untested }}
+        run: echo "$PASSED passed, $FAILED failed, $UNTESTED rules without a test"

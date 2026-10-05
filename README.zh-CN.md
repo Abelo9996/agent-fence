@@ -53,6 +53,45 @@ rule = "no-prod-deploy"
 
 `agent-fence test` 会运行其中的 `[[tests]]`，这样团队就能在 CI 里对自己的策略做单元测试。
 
+## 在 CI 中使用
+
+这个仓库同时也是一个 GitHub Action。它会对你的策略运行 `agent-fence test`，在作业摘要（job summary）里写出通过的测试、失败的测试以及被遮蔽的规则（因为总有另一条规则胜出，所以永远不会做出决策的规则），并在有测试失败时让作业失败。
+
+```yaml
+# .github/workflows/agent-fence.yml
+name: agent-fence policy
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: Abelo9996/agent-fence@v0
+        with:
+          policy: .agent-fence.toml
+          fail-on-shadowed: true
+```
+
+同样的文件也在 [examples/agent-fence-policy.yml](examples/agent-fence-policy.yml)。
+
+| 输入 | 默认值 | 含义 |
+| --- | --- | --- |
+| `policy` | `.agent-fence.toml` | 策略文件，相对于 `working-directory`。文件中的相对路径以它自己所在的目录为基准。|
+| `version` | `0.2.0` | 从 npm 安装的 agent-fence 版本（`npx @abelo9996/agent-fence@<version>`）。也可以填一个软件包 tarball 的路径。|
+| `args` | | 传给 `agent-fence test` 的额外参数，按空白字符拆分。|
+| `fail-on-shadowed` | `false` | 有规则被遮蔽时也让作业失败。|
+| `node-version` | `24` | `actions/setup-node` 使用的 Node.js 版本。|
+| `working-directory` | `.` | 运行目录。|
+
+输出：`result`（`pass` 或 `fail`）、`passed`、`failed`、`shadowed`、`untested`（没有任何测试由其决定的规则数）以及 `report-path`（`agent-fence test --json` 输出的 JSON 文件路径）。失败的测试和被遮蔽的规则也会作为注解（annotation）显示在策略文件上。这个 Action 不需要令牌，除了读取检出的代码之外也不需要任何权限。
+
+在本地，同样的检查是 `agent-fence test` 和 `agent-fence lint`。判断方法是：取一条规则自身模式能匹配的最小输入（通配符用一个普通单词填充），如果在这个输入上胜出的是另一条规则（更具体的规则、具体程度相同但动作更严格的规则，或者项目规则无法放宽的用户规则），这条规则就会被报告为被遮蔽。`command_regex` 和 `secrets` 规则无法构造出示例输入，因此不做检查。
+
 ## 内置策略的决策结果
 
 内置规则只是一个起点。`agent-fence rules` 会列出所有内置规则，`agent-fence explain <id>` 可以查看其中任意一条。
@@ -161,12 +200,15 @@ Codex 只运行已被信任的新 hook 或改动过的 hook，而 `codex exec` �
 | `agent-fence init [--user] [--force]` | 生成一份带注释的初始策略。|
 | `agent-fence rules [--json]` | 列出所有生效的规则，以及每条规则来自哪个文件。|
 | `agent-fence explain <rule-id>` | 查看某条规则的来源、匹配条件、原因、覆盖关系和测试。|
-| `agent-fence test` | 运行 `[[tests]]`；任何一项失败都以 1 退出。|
+| `agent-fence test [--json] [--strict]` | 运行 `[[tests]]`；任何一项失败都以 1 退出。同时会对被遮蔽的规则给出警告（加 `--strict` 时视为失败）。|
+| `agent-fence lint [--json]` | 列出被遮蔽的规则（永远不会做出决策的规则）以及没有任何测试由其决定的规则。有规则被遮蔽时以 1 退出。|
 | `agent-fence log [-n 50] [--action deny] [--tool bash] [--source claude] [--since 2h] [--all] [--json]` | 读取当前项目（或全部项目）的审计日志。`--path` 会打印日志所在位置。|
 | `agent-fence hooks install\|uninstall\|status --agent claude\|codex [--shared\|--project]` | 管理 hooks。已有的设置会被合并而不是替换，并且会先做备份。|
 | `agent-fence codex-rules [--write\|--out <file>]` | 把命令规则导出为 Codex 的 `prefix_rule`。|
 | `agent-fence exec -- <cmd> [args]` | 先检查，再不经过 shell 直接运行。被拦截时退出码为 126。|
 | `agent-fence shell -c "<script>"` / `agent-fence-shell` | 一个替代 shell，会先检查脚本再执行。|
+
+`--policy <file>` 可用于 `check`、`rules`、`explain`、`test`、`lint` 和 `codex-rules`：它会把该文件作为项目策略加载，项目根目录设为该文件所在的目录。
 
 ### 审计日志
 

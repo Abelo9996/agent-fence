@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0 (unreleased)
+
+GitHub Action and policy linting.
+
+- The repository is a GitHub Action (`uses: Abelo9996/agent-fence@v0`). It runs `agent-fence test` on a policy file, writes a job summary with passes, failures and shadowed rules, adds annotations on the policy file, sets outputs (`result`, `passed`, `failed`, `shadowed`, `untested`, `report-path`) and fails the job when a test fails. `fail-on-shadowed: true` also fails it on shadowed rules. See "Use in CI" in the README and `examples/agent-fence-policy.yml`.
+- New `agent-fence lint`: reports shadowed rules (a user or project rule that never decides anything, because for the smallest input its own pattern matches another rule wins) with the winning rule and why, and rules that no `[[tests]]` case is decided by. Exit 1 when a rule is shadowed.
+- `agent-fence test` warns about shadowed rules after the results; `--strict` makes them fail. `--json` prints the results, shadowed rules and untested rules as JSON (a policy error becomes `{"error": ...}`).
+- New global `--policy <file>`: load that file as the project policy instead of `.agent-fence.toml`, with the project root set to its directory.
+
 ## 0.1.1 (2026-10-04)
 
 Fixes from a first-user review: fewer false blocks in normal work, and several ways around the built-in rules closed.

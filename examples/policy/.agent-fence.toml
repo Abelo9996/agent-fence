@@ -1,0 +1,52 @@
+# Sample policy checked by this repo's CI with the agent-fence action.
+version = 1
+
+[[rules]]
+id = "no-prod-deploy"
+action = "deny"
+command = ["npm run deploy:prod", "terraform apply", "kubectl * --context prod*"]
+reason = "Production deploys go through CI. Ask the user."
+
+[[rules]]
+id = "migrations-need-review"
+action = "ask"
+tool = "write"
+path = "db/migrations/**"
+reason = "Migrations are reviewed by a human before they are written."
+
+[[rules]]
+id = "docs-fetch"
+action = "allow"
+url = "https://docs.example.com/*"
+reason = "The team's own docs."
+
+[[tests]]
+name = "terraform apply is blocked, even after cd"
+tool = "bash"
+input = "cd infra && terraform apply -auto-approve"
+expect = "deny"
+rule = "no-prod-deploy"
+
+[[tests]]
+tool = "write"
+path = "db/migrations/0042_add_index.sql"
+expect = "ask"
+rule = "migrations-need-review"
+
+[[tests]]
+tool = "fetch"
+url = "https://docs.example.com/guide"
+expect = "allow"
+rule = "docs-fetch"
+
+[[tests]]
+name = "the built-in rules still apply"
+tool = "bash"
+input = "git push --force origin main"
+expect = "deny"
+rule = "git-force-push"
+
+[[tests]]
+tool = "bash"
+input = "npm test"
+expect = "allow"

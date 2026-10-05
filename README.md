@@ -56,6 +56,57 @@ rule = "no-prod-deploy"
 
 `agent-fence test` runs the `[[tests]]` so a team can unit-test its policy in CI.
 
+## Use in CI
+
+The repository is also a GitHub Action. It runs `agent-fence test` on your policy,
+writes a job summary with the passes, the failures and any shadowed rule (a rule
+that never decides anything because another rule always wins), and fails the job
+when a test fails.
+
+```yaml
+# .github/workflows/agent-fence.yml
+name: agent-fence policy
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: Abelo9996/agent-fence@v0
+        with:
+          policy: .agent-fence.toml
+          fail-on-shadowed: true
+```
+
+The same file is in [examples/agent-fence-policy.yml](examples/agent-fence-policy.yml).
+
+| Input | Default | Meaning |
+| --- | --- | --- |
+| `policy` | `.agent-fence.toml` | Policy file, relative to `working-directory`. Relative paths in it resolve against its own directory. |
+| `version` | `0.2.0` | agent-fence version from npm (`npx @abelo9996/agent-fence@<version>`). A path to a package tarball also works. |
+| `args` | | Extra arguments for `agent-fence test`, split on whitespace. |
+| `fail-on-shadowed` | `false` | Also fail the job when a rule is shadowed. |
+| `node-version` | `24` | Node.js version for `actions/setup-node`. |
+| `working-directory` | `.` | Where to run. |
+
+Outputs: `result` (`pass` or `fail`), `passed`, `failed`, `shadowed`, `untested`
+(rules no test is decided by) and `report-path` (the JSON from
+`agent-fence test --json`). Failed tests and shadowed rules also show up as
+annotations on the policy file. The action needs no token and no permissions
+beyond reading the checkout.
+
+Locally, the same checks are `agent-fence test` and `agent-fence lint`. A rule is
+reported as shadowed when, for the smallest input its own pattern matches (wildcards
+filled with a plain word), another rule wins: a more specific one, one with the same
+specificity and a stricter action, or a user rule a project rule cannot loosen.
+`command_regex` and `secrets` rules cannot be turned into an example and are not
+checked.
+
 ## What the built-in policy decides
 
 The built-in rules are a starting point. `agent-fence rules` lists them and
@@ -208,12 +259,17 @@ the path that exists. Matching ignores case on macOS and Windows.
 | `agent-fence init [--user] [--force]` | Write a commented starter policy. |
 | `agent-fence rules [--json]` | Every effective rule and which file it came from. |
 | `agent-fence explain <rule-id>` | Source, matcher, reason, overrides and tests for one rule, and the exact TOML to turn it off or allow one case. |
-| `agent-fence test` | Run `[[tests]]`; exit 1 on any failure. |
+| `agent-fence test [--json] [--strict]` | Run `[[tests]]`; exit 1 on any failure. Also warns about shadowed rules (`--strict` makes them fail). |
+| `agent-fence lint [--json]` | Shadowed rules (rules that never decide anything) and rules no test is decided by. Exit 1 when a rule is shadowed. |
 | `agent-fence log [-n 50] [--action deny] [--tool bash] [--source claude] [--since 2h] [--all] [--json]` | Read the audit log for this project (or all). `--path` prints where it is. |
 | `agent-fence hooks install\|uninstall\|status --agent claude\|codex [--shared\|--project]` | Manage hooks. Existing settings are merged, never replaced, and backed up first. |
 | `agent-fence codex-rules [--write\|--out <file>]` | Export command rules as Codex `prefix_rule`s. |
 | `agent-fence exec -- <cmd> [args]` | Check, then run without a shell. Exit 126 when blocked. |
 | `agent-fence shell -c "<script>"` / `agent-fence-shell` | A shell stand-in that checks scripts first. |
+
+`--policy <file>` works with `check`, `rules`, `explain`, `test`, `lint` and
+`codex-rules`: it loads that file as the project policy, with the project root set
+to the directory that holds it.
 
 ### Audit log
 

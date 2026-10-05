@@ -32,7 +32,7 @@ export interface Decision {
   pattern?: string;
 }
 
-interface Candidate {
+export interface Candidate {
   rule: Rule;
   score: number;
   pattern?: string;
@@ -83,7 +83,7 @@ function rulesFor(policy: Policy, tool: Tool): Rule[] {
 }
 
 /** Candidates from path-based rules (path globs and outside_project). */
-function pathCandidates(policy: Policy, tool: "read" | "write", absPath: string): Candidate[] {
+export function pathCandidates(policy: Policy, tool: "read" | "write", absPath: string): Candidate[] {
   const out: Candidate[] = [];
   for (const r of rulesFor(policy, tool)) {
     if (r.paths) {
@@ -297,7 +297,7 @@ export function expandArg(word: string, cwd: string): string[] {
   return out;
 }
 
-function commandCandidates(policy: Policy, cmd: SimpleCommand): Candidate[] {
+export function commandCandidates(policy: Policy, cmd: SimpleCommand): Candidate[] {
   const out: Candidate[] = [];
   const text = cmd.argv.join(" ");
   for (const r of rulesFor(policy, "bash")) {
@@ -382,6 +382,19 @@ export function checkBash(policy: Policy, command: string, cwd: string): Decisio
   return strictest(decisions)!;
 }
 
+/** Candidates from url rules for one fetch. */
+export function urlCandidates(policy: Policy, url: string): Candidate[] {
+  const out: Candidate[] = [];
+  for (const r of rulesFor(policy, "fetch")) {
+    const hits = (r.urls ?? []).filter((u) => u.re.test(url));
+    if (hits.length) {
+      const best = hits.reduce((a, b) => (b.specificity > a.specificity ? b : a));
+      out.push({ rule: r, score: best.specificity + r.priority, pattern: best.source });
+    }
+  }
+  return out;
+}
+
 export function evaluate(policy: Policy, req: Request): Decision {
   const cwd = req.cwd ? path.resolve(req.cwd) : policy.root;
   switch (req.tool) {
@@ -399,15 +412,7 @@ export function evaluate(policy: Policy, req: Request): Decision {
     }
     case "fetch": {
       const url = req.url ?? "";
-      const cands: Candidate[] = [];
-      for (const r of rulesFor(policy, "fetch")) {
-        const hits = (r.urls ?? []).filter((u) => u.re.test(url));
-        if (hits.length) {
-          const best = hits.reduce((a, b) => (b.specificity > a.specificity ? b : a));
-          cands.push({ rule: r, score: best.specificity + r.priority, pattern: best.source });
-        }
-      }
-      const win = pick(cands);
+      const win = pick(urlCandidates(policy, url));
       return win ? fromCandidate(win, url) : fallback(policy, "fetch", url);
     }
   }

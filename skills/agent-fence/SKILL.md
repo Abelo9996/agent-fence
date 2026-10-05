@@ -53,6 +53,7 @@ agent-fence explain git-force-push    # where a rule comes from and what it matc
 agent-fence rules                     # every effective rule
 agent-fence log --action deny         # what was blocked recently
 agent-fence test                      # run the policy's own [[tests]]
+agent-fence lint                      # rules that can never decide anything, and untested rules
 ```
 
 Checking a command before you run it is cheap and saves a blocked call.

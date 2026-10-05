@@ -1,0 +1,20 @@
+# Deliberately broken policy for the action's failure path in CI:
+# one test fails and one rule is shadowed by the built-in git-push rule.
+version = 1
+
+[[rules]]
+id = "allow-push"
+action = "allow"
+command = "git push"
+reason = "Pushing is fine here (but the built-in git-push rule wins the tie)."
+
+[[tests]]
+name = "pushes are allowed"
+tool = "bash"
+input = "git push origin main"
+expect = "allow"
+
+[[tests]]
+tool = "bash"
+input = "git push --force"
+expect = "deny"

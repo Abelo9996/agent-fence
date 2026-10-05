@@ -9,7 +9,8 @@ import { STARTER_POLICY } from "./defaults.js";
 import { evaluate, howToChange, type Request } from "./engine.js";
 import { allHookTargets, codexHookTrusted, hookInstalled, hookTarget, installHook, runningFromNpxCache, uninstallHook, type Agent } from "./hooks.js";
 import { PROJECT_POLICY, findProjectRoot, homeDir, normalizePath, userPolicyPath } from "./paths.js";
-import { loadPolicy, PolicyError, TOOLS, type Rule, type Tool } from "./policy.js";
+import { describeShadowed, lintPolicy, untestedRules } from "./lint.js";
+import { loadPolicy, PolicyError, TOOLS, type PolicyTest, type Rule, type Tool } from "./policy.js";
 import { describeTest, runPolicyTests } from "./policy-tests.js";
 import { VERSION } from "./version.js";
 import { runExec, runShell } from "./wrap.js";
@@ -27,13 +28,32 @@ function fail(msg: string, code = 1): never {
   process.exit(code);
 }
 
+/** Set from the global --policy option before a command runs. */
+let policyFile: string | undefined;
+
 function load(cwd = process.cwd()) {
   try {
-    return loadPolicy({ cwd });
+    return loadPolicy({ cwd, projectFile: policyFile });
   } catch (e) {
     if (e instanceof PolicyError) fail(e.message);
     throw e;
   }
+}
+
+/** Like load, but with --json a policy error is printed as JSON on stdout. */
+function loadForReport(json: boolean | undefined) {
+  if (!json) return load();
+  try {
+    return loadPolicy({ cwd: process.cwd(), projectFile: policyFile });
+  } catch (e) {
+    if (!(e instanceof PolicyError)) throw e;
+    process.stdout.write(JSON.stringify({ version: VERSION, error: e.message }, null, 2) + "\n");
+    process.exit(1);
+  }
+}
+
+function testSubject(t: PolicyTest): string | undefined {
+  return t.tool === "bash" ? t.input : t.tool === "fetch" ? t.url : t.path;
 }
 
 function readStdin(): Promise<string> {
@@ -193,27 +213,86 @@ cli.command("explain <rule-id>", "Show where a rule comes from, what it matches 
   for (const t of tests) process.stdout.write(`  test: ${describeTest(t)} expects ${t.expect}\n`);
 });
 
-cli.command("test", "Run the [[tests]] declared in the user and project policy").action(() => {
-  const p = load();
-  if (!p.tests.length) {
-    process.stdout.write(`No [[tests]] found in ${p.files.filter((f) => f.layer !== "builtin").map((f) => f.file).join(" or ")}\n`);
-    return;
-  }
-  const results = runPolicyTests(p);
-  let failed = 0;
-  for (const r of results) {
-    if (r.pass) {
-      process.stdout.write(`pass  ${describeTest(r.test)} -> ${r.decision!.action} (${r.decision!.rule})\n`);
-    } else {
-      failed++;
-      const got = r.error ? `error: ${r.error}` : `${r.decision!.action} (${r.decision!.rule})`;
-      const want = r.test.expect + (r.test.rule ? ` (${r.test.rule})` : "");
-      process.stdout.write(`FAIL  ${describeTest(r.test)}: expected ${want}, got ${got}  [${r.test.file}]\n`);
+cli
+  .command("test", "Run the [[tests]] declared in the user and project policy, and check for shadowed rules")
+  .option("--json", "Print results, shadowed rules and untested rules as JSON")
+  .option("--strict", "Also fail (exit 1) when a rule is shadowed")
+  .action((o: { json?: boolean; strict?: boolean }) => {
+    const p = loadForReport(o.json);
+    const results = runPolicyTests(p);
+    const lint = lintPolicy(p);
+    const failed = results.filter((r) => !r.pass).length;
+    const code = failed || (o.strict && lint.shadowed.length) ? 1 : 0;
+    if (o.json) {
+      const out = {
+        version: VERSION,
+        root: p.root,
+        files: p.files.filter((f) => f.layer !== "builtin"),
+        rules: p.rules.filter((r) => r.layer !== "builtin").length,
+        passed: results.length - failed,
+        failed,
+        tests: results.map((r) => ({
+          name: describeTest(r.test),
+          tool: r.test.tool,
+          subject: testSubject(r.test),
+          expect: r.test.expect,
+          expectRule: r.test.rule ?? null,
+          pass: r.pass,
+          action: r.decision?.action ?? null,
+          rule: r.decision?.rule ?? null,
+          error: r.error ?? null,
+          file: r.test.file,
+        })),
+        shadowed: lint.shadowed,
+        notChecked: lint.notChecked,
+        untested: untestedRules(p, results),
+      };
+      process.stdout.write(JSON.stringify(out, null, 2) + "\n");
+      process.exit(code);
     }
-  }
-  process.stdout.write(`\n${results.length - failed} passed, ${failed} failed\n`);
-  process.exit(failed ? 1 : 0);
-});
+    if (!results.length) {
+      process.stdout.write(`No [[tests]] found in ${p.files.filter((f) => f.layer !== "builtin").map((f) => f.file).join(" or ")}\n`);
+    }
+    for (const r of results) {
+      if (r.pass) {
+        process.stdout.write(`pass  ${describeTest(r.test)} -> ${r.decision!.action} (${r.decision!.rule})\n`);
+      } else {
+        const got = r.error ? `error: ${r.error}` : `${r.decision!.action} (${r.decision!.rule})`;
+        const want = r.test.expect + (r.test.rule ? ` (${r.test.rule})` : "");
+        process.stdout.write(`FAIL  ${describeTest(r.test)}: expected ${want}, got ${got}  [${r.test.file}]\n`);
+      }
+    }
+    if (results.length) process.stdout.write(`\n${results.length - failed} passed, ${failed} failed\n`);
+    if (lint.shadowed.length) {
+      process.stdout.write(`\n${lint.shadowed.length} shadowed rule${lint.shadowed.length === 1 ? "" : "s"}${o.strict ? "" : " (warning; --strict makes this fail)"}:\n`);
+      for (const sh of lint.shadowed) process.stdout.write(`  ${describeShadowed(sh)}\n`);
+    }
+    process.exit(code);
+  });
+
+cli
+  .command("lint", "Check the policy for shadowed rules (rules that can never decide) and untested rules")
+  .option("--json", "Print as JSON")
+  .action((o: { json?: boolean }) => {
+    const p = loadForReport(o.json);
+    const lint = lintPolicy(p);
+    const untested = untestedRules(p, runPolicyTests(p));
+    if (o.json) {
+      process.stdout.write(JSON.stringify({ version: VERSION, root: p.root, ...lint, untested }, null, 2) + "\n");
+      process.exit(lint.shadowed.length ? 1 : 0);
+    }
+    for (const f of p.files) if (f.layer !== "builtin") process.stdout.write(`${f.layer.padEnd(8)} ${f.loaded ? "" : "(not found) "}${f.file}\n`);
+    const n = lint.checked.length + lint.notChecked.length;
+    process.stdout.write(`${n} rule${n === 1 ? "" : "s"} in these files, ${p.tests.length} test${p.tests.length === 1 ? "" : "s"}\n\n`);
+    if (lint.shadowed.length) {
+      for (const sh of lint.shadowed) process.stdout.write(`shadowed  ${describeShadowed(sh)}\n`);
+    } else {
+      process.stdout.write(`ok        no shadowed rules (${lint.checked.length} checked)\n`);
+    }
+    if (lint.notChecked.length) process.stdout.write(`skipped   ${lint.notChecked.join(", ")} (command_regex and secrets rules cannot be checked)\n`);
+    if (untested.length) process.stdout.write(`untested  ${untested.join(", ")} (no [[tests]] case is decided by these rules)\n`);
+    process.exit(lint.shadowed.length ? 1 : 0);
+  });
 
 cli
   .command("log", "Show recent decisions from the audit log")
@@ -360,6 +439,7 @@ cli
 cli.command("exec", "Check a command, then run it: agent-fence exec -- <command> [args...]");
 cli.command("shell", "Act as a shell (-c script) that checks scripts first; usable as SHELL via agent-fence-shell");
 
+cli.option("--policy <file>", "Use this file as the project policy (default: .agent-fence.toml in the project root)");
 cli.help();
 cli.version(VERSION);
 
@@ -369,6 +449,8 @@ try {
     if (cli.args.length) fail(`unknown command "${cli.args[0]}". Run agent-fence --help.`);
     if (!cli.options.help && !cli.options.version) cli.outputHelp();
   } else {
+    if (typeof cli.options.policy === "string") policyFile = cli.options.policy;
+    else if (cli.options.policy !== undefined) fail("--policy needs a file path");
     await cli.runMatchedCommand();
   }
 } catch (e) {

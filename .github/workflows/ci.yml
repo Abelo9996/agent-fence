@@ -41,3 +41,67 @@ jobs:
           code=$?
           set -e
           test "$code" = "3"
+
+  action:
+    name: action / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Build and pack this checkout
+        id: pack
+        shell: bash
+        run: |
+          npm ci
+          mkdir -p "$RUNNER_TEMP/pkg"
+          name=$(npm pack --json --pack-destination "$RUNNER_TEMP/pkg" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s)[0].filename))')
+          echo "tarball=$RUNNER_TEMP/pkg/$name" >> "$GITHUB_OUTPUT"
+
+      - name: Action on the sample policy
+        id: pass
+        uses: ./
+        with:
+          policy: examples/policy/.agent-fence.toml
+          version: ${{ steps.pack.outputs.tarball }}
+          fail-on-shadowed: true
+
+      - name: Action on a policy with a failing test and a shadowed rule (fails on purpose)
+        id: fail
+        continue-on-error: true
+        uses: ./
+        with:
+          policy: test/fixtures/action-failing/.agent-fence.toml
+          version: ${{ steps.pack.outputs.tarball }}
+
+      - name: Check the action's outputs
+        shell: bash
+        env:
+          PASS_RESULT: ${{ steps.pass.outputs.result }}
+          PASS_PASSED: ${{ steps.pass.outputs.passed }}
+          PASS_FAILED: ${{ steps.pass.outputs.failed }}
+          PASS_SHADOWED: ${{ steps.pass.outputs.shadowed }}
+          PASS_REPORT: ${{ steps.pass.outputs.report-path }}
+          FAIL_OUTCOME: ${{ steps.fail.outcome }}
+          FAIL_RESULT: ${{ steps.fail.outputs.result }}
+          FAIL_PASSED: ${{ steps.fail.outputs.passed }}
+          FAIL_FAILED: ${{ steps.fail.outputs.failed }}
+          FAIL_SHADOWED: ${{ steps.fail.outputs.shadowed }}
+        run: |
+          set -x
+          test "$PASS_RESULT" = pass
+          test "$PASS_PASSED" = 5
+          test "$PASS_FAILED" = 0
+          test "$PASS_SHADOWED" = 0
+          test -s "$PASS_REPORT"
+          test "$FAIL_OUTCOME" = failure
+          test "$FAIL_RESULT" = fail
+          test "$FAIL_PASSED" = 1
+          test "$FAIL_FAILED" = 1
+          test "$FAIL_SHADOWED" = 1

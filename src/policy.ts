@@ -237,17 +237,24 @@ export interface LoadOptions {
   userFile?: string | null;
   /** Skip the project policy file. */
   noProject?: boolean;
+  /**
+   * Use this file as the project policy instead of <root>/.agent-fence.toml. The
+   * project root becomes the directory that holds it, unless root is given.
+   */
+  projectFile?: string;
 }
 
 /** Load builtin, user and project layers and merge them. */
 export function loadPolicy(opts: LoadOptions = {}): Policy {
   const cwd = opts.cwd ?? process.cwd();
-  const root = normalizePath(opts.root ?? findProjectRoot(cwd), cwd);
+  const projectFile = opts.projectFile ? path.resolve(cwd, opts.projectFile) : undefined;
+  if (projectFile && !existsSync(projectFile)) throw new PolicyError(`${projectFile}: policy file not found`);
+  const root = normalizePath(opts.root ?? (projectFile ? path.dirname(projectFile) : findProjectRoot(cwd)), cwd);
   const layers: { layer: Layer; file: string; text: string | null }[] = [{ layer: "builtin", file: "(built-in)", text: BUILTIN_POLICY }];
   const userFile = opts.userFile === undefined ? userPolicyPath() : opts.userFile;
   if (userFile) layers.push({ layer: "user", file: userFile, text: existsSync(userFile) ? readFileSync(userFile, "utf8") : null });
   if (!opts.noProject) {
-    const pf = path.join(root, PROJECT_POLICY);
+    const pf = projectFile ?? path.join(root, PROJECT_POLICY);
     layers.push({ layer: "project", file: pf, text: existsSync(pf) ? readFileSync(pf, "utf8") : null });
   }
 

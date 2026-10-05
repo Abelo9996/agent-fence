@@ -1,0 +1,88 @@
+name: agent-fence policy check
+description: Run the [[tests]] in an agent-fence policy, flag shadowed rules, and fail the job when a test fails.
+author: Abel Yagubyan
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  policy:
+    description: Path to the policy file, relative to working-directory. Relative paths in the policy resolve against the directory that holds it.
+    required: false
+    default: .agent-fence.toml
+  version:
+    description: agent-fence version to install from npm (for example 0.2.0). A path to a package tarball also works.
+    required: false
+    default: 0.2.0
+  args:
+    description: Extra arguments for `agent-fence test`, split on whitespace (for example --strict).
+    required: false
+    default: ""
+  fail-on-shadowed:
+    description: Fail the job when a rule is shadowed (another rule always wins, so it never decides anything). true or false.
+    required: false
+    default: "false"
+  node-version:
+    description: Node.js version to set up with actions/setup-node (agent-fence needs 20 or newer).
+    required: false
+    default: "24"
+  working-directory:
+    description: Directory to run in. The policy path is relative to it.
+    required: false
+    default: .
+
+outputs:
+  result:
+    description: pass or fail.
+    value: ${{ steps.check.outputs.result }}
+  passed:
+    description: Number of [[tests]] that passed.
+    value: ${{ steps.check.outputs.passed }}
+  failed:
+    description: Number of [[tests]] that failed.
+    value: ${{ steps.check.outputs.failed }}
+  shadowed:
+    description: Number of shadowed rules.
+    value: ${{ steps.check.outputs.shadowed }}
+  untested:
+    description: Number of policy rules that no test is decided by.
+    value: ${{ steps.check.outputs.untested }}
+  report-path:
+    description: Path to the JSON report from `agent-fence test --json`.
+    value: ${{ steps.check.outputs.report-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+        package-manager-cache: false
+
+    - name: Run agent-fence test
+      id: check
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        AF_POLICY: ${{ inputs.policy }}
+        AF_VERSION: ${{ inputs.version }}
+        AF_ARGS: ${{ inputs.args }}
+        AF_STRICT: ${{ inputs.fail-on-shadowed }}
+      run: |
+        set -uo pipefail
+        case "$AF_VERSION" in
+          *.tgz|*/*|*\\*) spec="$AF_VERSION" ;;
+          *) spec="@abelo9996/agent-fence@$AF_VERSION" ;;
+        esac
+        strict=""
+        if [ "$(printf '%s' "$AF_STRICT" | tr '[:upper:]' '[:lower:]')" = "true" ]; then strict="--strict"; fi
+        result="$RUNNER_TEMP/agent-fence-result-$GITHUB_RUN_ATTEMPT-$RANDOM.json"
+        errors="$result.stderr"
+        echo "agent-fence $AF_VERSION: test --policy $AF_POLICY"
+        # strict and AF_ARGS are split on whitespace on purpose.
+        # shellcheck disable=SC2086
+        npx --yes --package "$spec" -- agent-fence test --policy "$AF_POLICY" --json $strict $AF_ARGS >"$result" 2>"$errors"
+        code=$?
+        node "$GITHUB_ACTION_PATH/action/summary.mjs" "$result" "$errors" "$code" "$AF_POLICY"
