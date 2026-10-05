@@ -21,6 +21,8 @@ export interface AuditEntry {
   reason: string;
   subject?: string;
   session?: string;
+  /** True when the call was checked by the hook that the Claude Code or Codex plugin ships. */
+  plugin?: boolean;
 }
 
 export function auditLogPath(): string {
@@ -48,6 +50,7 @@ export function appendAudit(e: {
   decision: Decision;
   agentTool?: string;
   session?: string;
+  plugin?: boolean;
 }): void {
   if (process.env.AGENT_FENCE_NO_LOG === "1") return;
   const entry: AuditEntry = {
@@ -64,6 +67,7 @@ export function appendAudit(e: {
     reason: e.decision.reason,
     subject: e.decision.subject ? clip(redact(e.decision.subject)) : undefined,
     session: e.session,
+    plugin: e.plugin || undefined,
   };
   try {
     const file = auditLogPath();

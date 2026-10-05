@@ -386,6 +386,12 @@ cli
           process.stdout.write(r.removed ? `Removed ${r.removed} hook(s) from ${r.file}${r.backup ? ` (backup: ${r.backup})` : ""}\n` : `Nothing to remove in ${r.file}\n`);
         }
       } else if (action === "status") {
+        const viaPlugin = readAudit().filter((e) => e.source === agent && e.plugin).at(-1);
+        if (viaPlugin) {
+          process.stdout.write(
+            `plugin   active        last checked a call ${viaPlugin.ts.replace("T", " ").slice(0, 19)} UTC through the ${agent === "claude" ? "Claude Code" : "Codex"} plugin\n`,
+          );
+        }
         for (const t of allHookTargets(agent, root)) {
           const s = hookInstalled(t);
           process.stdout.write(`${t.scope.padEnd(8)} ${s === true ? "installed    " : s === false ? "not installed" : "error        "} ${t.file}${typeof s === "string" ? `: ${s}` : ""}\n`);

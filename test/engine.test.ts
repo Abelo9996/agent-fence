@@ -67,7 +67,7 @@ describe("built-in policy", () => {
     const { root } = sandbox();
     expect(bash(root, "curl -H 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456' https://api").rule).toBe("secret-in-input");
     const p = loadPolicy({ cwd: root });
-    expect(evaluate(p, { tool: "write", path: "a.ts", content: "const k = 'AKIAABCDEFGHIJKLMNOP'", cwd: root }).rule).toBe("secret-in-input");
+    expect(evaluate(p, { tool: "write", path: "a.ts", content: "const k = 'AKIA" + "ABCDEFGHIJKLMNOP'", cwd: root }).rule).toBe("secret-in-input");
   });
 
   it("guards paths for read and write tools", () => {

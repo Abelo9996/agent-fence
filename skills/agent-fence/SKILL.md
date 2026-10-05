@@ -1,6 +1,6 @@
 ---
 name: agent-fence
-description: How to respond when agent-fence blocks or holds a tool call. Use this whenever a tool call, hook result or command output contains "agent-fence", "blocked by rule", "needs the user's approval", or exits with code 126 from agent-fence exec / agent-fence-shell, and whenever the user asks you to check, explain, test or change their agent-fence policy (.agent-fence.toml). Also use it before running a command you suspect the policy forbids (force-push, recursive delete, reading .env or ~/.ssh, package installs, writes outside the project).
+description: How to respond when agent-fence blocks or holds a tool call. Use this whenever a tool call, hook result or command output contains "agent-fence", "blocked by rule", "needs the user's approval", or exits with code 126 from agent-fence exec / agent-fence-shell, and whenever the user asks you to check, explain, test or change their agent-fence policy (.agent-fence.toml). Also use it before running a command you suspect the policy forbids (force-push, recursive delete, reading .env or SSH keys, package installs, writes outside the project).
 ---
 
 # agent-fence

@@ -1,0 +1,18 @@
+{
+  "description": "Check every shell command, file read and write, and fetch against the agent-fence policy before it runs.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Read|Write|Edit|MultiEdit|NotebookEdit|NotebookRead|Glob|Grep|LS|WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.mjs", "hook", "claude"],
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

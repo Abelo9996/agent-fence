@@ -27,6 +27,34 @@ agent-fence log                                # what your agents tried in this 
 
 Homebrew（macOS 和 Linux）：`brew install abelo9996/tap/agent-fence` 会安装 `agent-fence` 和 `agent-fence-shell`。
 
+## 作为 Claude Code 插件安装
+
+在 Claude Code 里运行：
+
+```text
+/plugin marketplace add Abelo9996/open-agent-lab
+/plugin install agent-fence@open-agent-lab
+```
+
+然后运行 `/reload-plugins` 或开一个新会话。插件会加入 agent-fence skill、`PreToolUse` hook（检查的工具和 `agent-fence hooks install --agent claude` 相同，但不改任何 settings 文件）、`/agent-fence:explain [rule-id]`（不带 id 时解释本项目最近一次拦截或审批提示）以及 `/agent-fence:log`。装了插件就不要再运行 `agent-fence hooks install --agent claude`，否则每次调用都会被检查两遍。在终端里也可以：`claude plugin marketplace add Abelo9996/open-agent-lab`，然后 `claude plugin install agent-fence@open-agent-lab`。需要 Claude Code 2.1.139 或更新版本，以及 Node 20+。
+
+hook 不需要额外安装：没有全局安装时，它通过 `npx -y @abelo9996/agent-fence` 运行，第一次使用时会下载这个包。每次被检查的工具调用（包括 Read、Glob 和 Grep）都要等它完成。在一台 Apple M 系列笔记本上实测，经由 npx 每次约 0.45 秒；全局安装后约 0.12 秒，插件只要在 PATH 里找到 agent-fence 就会自动使用它：
+
+```bash
+npm install -g @abelo9996/agent-fence
+```
+
+如果 hook 根本无法运行（没有 Node，或 npx 下载不了这个包），Claude Code 会显示 hook 错误，这次调用不会被检查，这和 settings 里的 hook 命令不存在时一样。`agent-fence hooks status --agent claude` 会显示插件最近一次检查调用的时间。
+
+## 作为 Codex 插件安装
+
+```bash
+codex plugin marketplace add Abelo9996/open-agent-lab
+codex plugin add agent-fence@open-agent-lab
+```
+
+这会加入 skill，以及一个针对 Bash、apply_patch、Edit、Write、Read 的 `PreToolUse` hook，运行 `npx -y @abelo9996/agent-fence hook codex`。Codex 只有在你信任插件的 hook 之后才会运行它：启动 `codex`，打开 `/hooks` 并信任 agent-fence 的 hook（见 [Codex hook 信任](#codex-hook-信任)）。和 `hooks install --agent codex` 一样，ask 规则会被拦截，并提示智能体去问你。插件和 `agent-fence hooks install --agent codex` 二选一，不要同时使用。
+
 ## 策略示例
 
 ```toml
@@ -122,6 +150,7 @@ jobs:
 | `cp .env.example .env` | ask | `secret-files-write` |
 | 写入项目之外的位置（临时目录除外） | deny | `write-outside-project` |
 | 写入 `.agent-fence.toml` 或 `.claude/settings.json`、`rm -rf .claude` | deny | `protect-fence` |
+| `agent-fence hooks uninstall`、`claude plugin disable agent-fence@open-agent-lab`、`codex plugin remove agent-fence@open-agent-lab` | deny | `protect-fence-cli` |
 | `echo 'unterminated` | ask | （无法解析） |
 
 ## 各智能体的支持情况

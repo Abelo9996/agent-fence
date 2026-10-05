@@ -177,7 +177,12 @@ reason = "Agents may not change their own permission policy or hook configuratio
 id = "protect-fence-cli"
 action = "deny"
 locked = true
-command = ["agent-fence hooks uninstall", "agent-fence hooks install --command*", "agent-fence init --force", "agent-fence init -f"]
+command = [
+  "agent-fence hooks uninstall", "agent-fence hooks install --command*", "agent-fence init --force", "agent-fence init -f",
+  "claude plugin disable agent-fence*", "claude plugin uninstall agent-fence*", "claude plugin remove agent-fence*",
+  "claude plugins disable agent-fence*", "claude plugins uninstall agent-fence*", "claude plugins remove agent-fence*",
+  "codex plugin remove agent-fence*",
+]
 reason = "Agents may not turn off their own permission policy."
 `;
 

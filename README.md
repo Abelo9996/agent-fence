@@ -30,6 +30,34 @@ Requires Node 20 or newer. No native dependencies.
 
 Homebrew (macOS and Linux): `brew install abelo9996/tap/agent-fence` installs `agent-fence` and `agent-fence-shell`.
 
+## Install as a Claude Code plugin
+
+Inside Claude Code:
+
+```text
+/plugin marketplace add Abelo9996/open-agent-lab
+/plugin install agent-fence@open-agent-lab
+```
+
+Then run `/reload-plugins` or start a new session. The plugin adds the agent-fence skill, the `PreToolUse` hook (the same tools as `agent-fence hooks install --agent claude`, without editing any settings file), `/agent-fence:explain [rule-id]` (with no id, it explains the latest block or approval prompt in this project) and `/agent-fence:log`. Do not also run `agent-fence hooks install --agent claude`, or every call is checked twice. From a shell: `claude plugin marketplace add Abelo9996/open-agent-lab`, then `claude plugin install agent-fence@open-agent-lab`. Needs Claude Code 2.1.139 or newer and Node 20+.
+
+The hook needs no install step: without a global install it runs `npx -y @abelo9996/agent-fence`, which downloads the package on first use. Every checked tool call (including Read, Glob and Grep) waits for it. Measured on an Apple M-series laptop, that is about 0.45 s per call through npx and about 0.12 s once agent-fence is installed globally, which the plugin uses automatically when it is on PATH:
+
+```bash
+npm install -g @abelo9996/agent-fence
+```
+
+If the hook cannot run at all (no Node, or npx cannot download the package), Claude Code shows a hook error and the call is not checked, the same as a settings hook whose command is missing. `agent-fence hooks status --agent claude` shows when the plugin last checked a call.
+
+## Install as a Codex plugin
+
+```bash
+codex plugin marketplace add Abelo9996/open-agent-lab
+codex plugin add agent-fence@open-agent-lab
+```
+
+This adds the skill and a `PreToolUse` hook for Bash, apply_patch, Edit, Write and Read that runs `npx -y @abelo9996/agent-fence hook codex`. Codex runs a plugin hook only after you trust it: start `codex`, open `/hooks` and trust the agent-fence hook (see [Codex hook trust](#codex-hook-trust)). As with `hooks install --agent codex`, ask rules block with a message telling the agent to ask you. Use either the plugin or `agent-fence hooks install --agent codex`, not both.
+
 ## Example policy
 
 ```toml
@@ -138,13 +166,14 @@ The built-in rules are a starting point. `agent-fence rules` lists them and
 | `cp .env.example .env` | ask | `secret-files-write` |
 | write outside the project (not temp) | deny | `write-outside-project` |
 | write `.agent-fence.toml` or `.claude/settings.json`, `rm -rf .claude` | deny | `protect-fence` |
+| `agent-fence hooks uninstall`, `claude plugin disable agent-fence@open-agent-lab`, `codex plugin remove agent-fence@open-agent-lab` | deny | `protect-fence-cli` |
 | `echo 'unterminated` | ask | (unparsable) |
 
 ## Per-agent support
 
 | Agent | How | What is enforced | Notes |
 | --- | --- | --- | --- |
-| Claude Code | `agent-fence hooks install --agent claude` adds a `PreToolUse` hook to `.claude/settings.local.json` (`--shared` for `settings.json`) | Bash, PowerShell (parsed as POSIX shell, best effort), Read, Write, Edit, MultiEdit, NotebookEdit, Glob, Grep, LS, WebFetch | deny and ask map to Claude Code's own `deny` and `ask`. On allow the hook prints nothing, so Claude Code's permission settings still apply: agent-fence never grants access. MCP tools are not checked. |
+| Claude Code | The [plugin](#install-as-a-claude-code-plugin), or `agent-fence hooks install --agent claude`, which adds a `PreToolUse` hook to `.claude/settings.local.json` (`--shared` for `settings.json`) | Bash, PowerShell (parsed as POSIX shell, best effort), Read, Write, Edit, MultiEdit, NotebookEdit, Glob, Grep, LS, WebFetch | deny and ask map to Claude Code's own `deny` and `ask`. On allow the hook prints nothing, so Claude Code's permission settings still apply: agent-fence never grants access. MCP tools are not checked. |
 | Codex CLI | `agent-fence hooks install --agent codex` adds a `PreToolUse` hook to `~/.codex/hooks.json` (`--project` for `<repo>/.codex/hooks.json`). Then trust it once, see [Codex hook trust](#codex-hook-trust). | Bash, apply_patch (every file in the patch), Edit, Write, Read | Codex hooks cannot ask: an "ask" result is ignored by Codex and the call would run. agent-fence therefore turns ask into deny, with a message telling the agent to ask you. Codex does not run an untrusted or modified hook. |
 | Codex CLI (native rules) | `agent-fence codex-rules --write` writes `~/.codex/rules/agent-fence.rules` | Command rules made of literal words become `prefix_rule`s: deny is `forbidden`, ask is `prompt` | Works without hooks and gives a real approval prompt, but Codex matches argv prefixes in order, so `git push origin main --force` is not caught by `git push --force`. Patterns with `*`, regex rules, path rules, secret detection and allow rules are not exported, so the exported rules can also be stricter than the hook (Codex prompts for a bare `npm install`). Use together with the hook. |
 | Any agent | `agent-fence exec -- <cmd> [args]` | The command and everything it chains or nests | Only what is run through the wrapper is checked. Ask needs a terminal; without one it blocks (exit 126). |

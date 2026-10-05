@@ -127,12 +127,12 @@ describe("audit log", () => {
 
   it("redacts common credential formats", () => {
     const samples = [
-      "AKIAABCDEFGHIJKLMNOP",
+      "AKIA" + "ABCDEFGHIJKLMNOP",
       "sk-proj-" + "a".repeat(30),
-      "xoxb-1234567890-abcdefghij",
-      "postgres://user:hunter2hunter2@db/x",
+      "xoxb-" + "1234567890-abcdefghij",
+      "postgres://user:" + "hunter2hunter2@db/x",
       "API_KEY=supersecretvalue123",
-      "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----",
+      "-----BEGIN OPENSSH " + "PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----",
     ];
     for (const s of samples) {
       const out = redact(`x ${s} y`);

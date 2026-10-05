@@ -1,0 +1,37 @@
+{
+  "name": "agent-fence",
+  "version": "0.2.0",
+  "description": "One permission policy for coding agents. Checks every shell command, file read and write against your .agent-fence.toml rules before it runs, and logs each decision.",
+  "author": { "name": "Abel Yagubyan", "url": "https://github.com/Abelo9996" },
+  "homepage": "https://github.com/Abelo9996/agent-fence#readme",
+  "repository": "https://github.com/Abelo9996/agent-fence",
+  "license": "MIT",
+  "keywords": ["permissions", "policy", "sandbox", "audit", "hooks", "codex"],
+  "skills": "./skills/",
+  "hooks": "./hooks/codex-hooks.json",
+  "interface": {
+    "displayName": "agent-fence",
+    "shortDescription": "Permission policy for agents",
+    "longDescription": "agent-fence checks each shell command, file read, file write and patch that Codex is about to run against one policy file (.agent-fence.toml in the project, plus your user policy and built-in defaults). Blocked calls come back to the agent with the rule id and the reason; every decision is appended to a local audit log you can read with agent-fence log. The plugin ships a PreToolUse hook and a skill that teaches the agent how to respond to a block. Codex runs a plugin hook only after you trust it in /hooks. Codex hooks cannot prompt, so rules that would ask for approval block with a message telling the agent to ask you. The hook runs the CLI through npx, or a global install is faster. It cannot stop code the agent writes and then runs outside a checked tool call.",
+    "developerName": "Abel Yagubyan",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Checks shell commands, file reads and writes, and patches before they run",
+      "Blocks calls your policy denies and tells the agent which rule fired",
+      "Logs every decision to a local audit file"
+    ],
+    "websiteURL": "https://github.com/Abelo9996/agent-fence",
+    "supportURL": "https://github.com/Abelo9996/agent-fence/issues",
+    "privacyPolicyURL": "https://github.com/Abelo9996/agent-fence/blob/main/SECURITY.md#privacy",
+    "termsOfServiceURL": "https://github.com/Abelo9996/agent-fence/blob/main/LICENSE",
+    "defaultPrompt": [
+      "Explain why agent-fence blocked my last command",
+      "Show what agent-fence blocked in this project today",
+      "Check whether git push --force is allowed here"
+    ],
+    "brandColor": "#1F7A4D",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/icon.svg",
+    "screenshots": ["./assets/screenshot.png"]
+  }
+}

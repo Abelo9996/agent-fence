@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write|Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @abelo9996/agent-fence hook codex",
+            "timeout": 60,
+            "statusMessage": "agent-fence policy check"
+          }
+        ]
+      }
+    ]
+  }
+}

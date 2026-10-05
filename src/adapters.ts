@@ -126,8 +126,11 @@ export function handleHook(agent: "claude" | "codex", raw: string, env: NodeJS.P
     };
   }
   if (!decision) return { stdout: null, decision: null };
+  // The Claude Code plugin's launcher sets AGENT_FENCE_VIA_PLUGIN; Codex sets
+  // PLUGIN_ROOT for every hook a plugin ships.
+  const plugin = env.AGENT_FENCE_VIA_PLUGIN === "1" || (agent === "codex" && !!env.PLUGIN_ROOT);
   for (const req of reqs) {
-    appendAudit({ source: agent, project: root, cwd, req, decision, agentTool: p.tool_name, session: p.session_id });
+    appendAudit({ source: agent, project: root, cwd, req, decision, agentTool: p.tool_name, session: p.session_id, plugin });
   }
   if (decision.action === "allow") return { stdout: null, decision };
 

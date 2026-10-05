@@ -1,0 +1,11 @@
+{
+  "name": "agent-fence",
+  "displayName": "agent-fence",
+  "version": "0.2.0",
+  "description": "One permission policy for coding agents. Checks every shell command, file read and write, and fetch against your .agent-fence.toml rules before it runs, and logs each decision.",
+  "author": { "name": "Abel Yagubyan", "url": "https://github.com/Abelo9996" },
+  "homepage": "https://github.com/Abelo9996/agent-fence#readme",
+  "repository": "https://github.com/Abelo9996/agent-fence",
+  "license": "MIT",
+  "keywords": ["permissions", "policy", "sandbox", "audit", "hooks"]
+}

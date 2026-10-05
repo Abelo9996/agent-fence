@@ -29,3 +29,7 @@ The limits listed under "What it cannot stop" in the README, for example code th
 ## Supported versions
 
 Only the latest release and `main` receive fixes while the project is at 0.x.
+
+## Privacy
+
+agent-fence runs only on your machine and makes no network requests. It reads your policy files and the tool call each hook receives, and appends each decision (time, project path, tool, the command or path with secret-looking values redacted, rule and reason) to a local audit log; `agent-fence log --path` prints where. Nothing is sent to the author or to any service. The Claude Code and Codex plugins download the package from the npm registry through `npx` unless agent-fence is installed globally.

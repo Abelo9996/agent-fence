@@ -8,6 +8,10 @@ GitHub Action and policy linting.
 - New `agent-fence lint`: reports shadowed rules (a user or project rule that never decides anything, because for the smallest input its own pattern matches another rule wins) with the winning rule and why, and rules that no `[[tests]]` case is decided by. Exit 1 when a rule is shadowed.
 - `agent-fence test` warns about shadowed rules after the results; `--strict` makes them fail. `--json` prints the results, shadowed rules and untested rules as JSON (a policy error becomes `{"error": ...}`).
 - New global `--policy <file>`: load that file as the project policy instead of `.agent-fence.toml`, with the project root set to its directory.
+- Claude Code plugin: `/plugin marketplace add Abelo9996/open-agent-lab`, then `/plugin install agent-fence@open-agent-lab`. It ships the skill, the `PreToolUse` hook (through `hooks/hooks.json`, so no settings file is edited), `/agent-fence:explain` (with no rule id it explains the latest block or approval prompt) and `/agent-fence:log`. The hook uses a global install when one is on PATH and otherwise runs through `npx`.
+- Codex plugin: `.codex-plugin/plugin.json` with the skill, an icon and a `PreToolUse` hook (`npx -y @abelo9996/agent-fence hook codex`), installable with `codex plugin add agent-fence@open-agent-lab`.
+- Audit log entries written through a plugin's hook carry `"plugin": true`, and `agent-fence hooks status` shows when the Claude Code or Codex plugin last checked a call.
+- `protect-fence-cli` also denies `claude plugin disable|uninstall|remove agent-fence...` and `codex plugin remove agent-fence...`, so an agent cannot turn off the plugin that checks it.
 
 ## 0.1.1 (2026-10-04)
 
