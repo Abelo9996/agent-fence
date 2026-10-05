@@ -61,7 +61,7 @@ jobs:
         run: |
           npm ci
           mkdir -p "$RUNNER_TEMP/pkg"
-          name=$(npm pack --json --pack-destination "$RUNNER_TEMP/pkg" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s)[0].filename))')
+          name=$(npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP/pkg" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s)[0].filename))')
           echo "tarball=$RUNNER_TEMP/pkg/$name" >> "$GITHUB_OUTPUT"
 
       - name: Action on the sample policy
