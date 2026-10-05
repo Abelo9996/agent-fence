@@ -85,4 +85,15 @@ runs:
         # shellcheck disable=SC2086
         npx --yes --package "$spec" -- agent-fence test --policy "$AF_POLICY" --json $strict $AF_ARGS >"$result" 2>"$errors"
         code=$?
-        node "$GITHUB_ACTION_PATH/action/summary.mjs" "$result" "$errors" "$code" "$AF_POLICY"
+        # The job is failed by the next step, so the outputs are kept even when tests fail.
+        node "$GITHUB_ACTION_PATH/action/summary.mjs" "$result" "$errors" "$code" "$AF_POLICY" || true
+
+    - name: Fail when a test failed or the policy could not be checked
+      if: steps.check.outputs.result != 'pass'
+      shell: bash
+      env:
+        AF_FAILED: ${{ steps.check.outputs.failed }}
+        AF_SHADOWED: ${{ steps.check.outputs.shadowed }}
+      run: |
+        echo "agent-fence policy check failed: ${AF_FAILED:-?} failed tests, ${AF_SHADOWED:-?} shadowed rules. See the job summary."
+        exit 1
