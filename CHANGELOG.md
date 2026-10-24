@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-10-24)
 
 See what your agent tried: a report, a shareable card, and a retroactive audit of existing transcripts.
 
