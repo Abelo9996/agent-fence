@@ -8,3 +8,6 @@ export { runPolicyTests } from "./policy-tests.js";
 export { lintPolicy, untestedRules, type LintReport, type ShadowedRule } from "./lint.js";
 export { redact, findSecrets } from "./secrets.js";
 export { normalizePath } from "./paths.js";
+export { buildReport, formatReport, categorize, type EvalRecord, type Report } from "./report.js";
+export { replayFile, parseTranscript, evaluateCalls, naiveWouldCatch, toRecord, type Replay, type ReplayResult } from "./replay.js";
+export { renderSvg, renderPng, cardLines } from "./card.js";

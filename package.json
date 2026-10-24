@@ -1,6 +1,6 @@
 {
   "name": "@abelo9996/agent-fence",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "One permission policy for every coding agent.",
   "type": "module",
   "exports": {
@@ -47,6 +47,7 @@
   "homepage": "https://github.com/Abelo9996/agent-fence#readme",
   "bugs": "https://github.com/Abelo9996/agent-fence/issues",
   "dependencies": {
+    "@resvg/resvg-wasm": "^2.6.2",
     "cac": "^6.7.14",
     "picomatch": "^4.0.7",
     "smol-toml": "^1.9.0"
