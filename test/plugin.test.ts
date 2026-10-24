@@ -36,7 +36,7 @@ describe("Claude Code plugin files", () => {
 
   it("every slash command has a description, runs only when the user asks, and can run the CLI", () => {
     const files = readdirSync(path.join(REPO, "commands")).filter((f) => f.endsWith(".md"));
-    expect(files.sort()).toEqual(["explain.md", "log.md"]);
+    expect(files.sort()).toEqual(["explain.md", "log.md", "report.md"]);
     for (const f of files) {
       const text = readFileSync(path.join(REPO, "commands", f), "utf8").replace(/\r\n/g, "\n");
       const front = /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1] ?? "";
