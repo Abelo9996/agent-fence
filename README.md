@@ -39,7 +39,7 @@ agent-fence report --since 7d                 # allowed / asked / denied, riskie
 agent-fence report --since 7d --card card.png # also card.png + card.svg, counts only, safe to share
 ```
 
-![agent-fence card: "What my coding agent tried this week: 3 force pushes blocked, 2 secret file reads blocked, 41 commands allowed. check yours: npx agent-fence report"](assets/card.png)
+![agent-fence card from a replay of 6 months of real Claude Code and Codex history: "What my coding agents tried in 6 months: 23 force pushes, 36 policy or hook edits and 388 secret file reads blocked, 38933 commands allowed. check yours: npx @abelo9996/agent-fence report"](assets/card.png)
 
 The card shows counts only: no commands, no paths, no secrets.
 

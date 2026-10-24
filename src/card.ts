@@ -62,7 +62,7 @@ export function renderSvg(r: Report): string {
   <text x="90" y="186" font-size="42" font-weight="700" fill="${COLOR.text}">${esc(title)}</text>
   ${rows}
   <text x="90" y="534" font-size="26" fill="${COLOR.dim}">counts only - no commands, paths or secrets</text>
-  <text x="90" y="578" font-size="30" font-weight="600" fill="${COLOR.accent}">check yours:  npx agent-fence report</text>
+  <text x="90" y="578" font-size="30" font-weight="600" fill="${COLOR.accent}">check yours:  npx @abelo9996/agent-fence report</text>
 </svg>
 `;
 }

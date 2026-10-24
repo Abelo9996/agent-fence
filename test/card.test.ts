@@ -39,7 +39,7 @@ describe("renderSvg", () => {
   it("is valid SVG containing the counts and the call to action", () => {
     expect(svg).toMatch(/^<\?xml/);
     expect(svg).toContain("3 force pushes blocked");
-    expect(svg).toContain("npx agent-fence report");
+    expect(svg).toContain("npx @abelo9996/agent-fence report");
     expect(svg).toContain("counts only");
   });
   it("escapes text", () => {
