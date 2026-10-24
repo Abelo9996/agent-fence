@@ -52,11 +52,19 @@ agent-fence check --tool read --path .env
 agent-fence explain git-force-push    # where a rule comes from and what it matches
 agent-fence rules                     # every effective rule
 agent-fence log --action deny         # what was blocked recently
+agent-fence report --since 7d         # allowed / asked / denied, riskiest blocks first
+agent-fence report --card card.png    # a shareable card (counts only, safe to post)
+agent-fence replay <session-log>      # what the policy would do on an existing transcript
 agent-fence test                      # run the policy's own [[tests]]
 agent-fence lint                      # rules that can never decide anything, and untested rules
 ```
 
 Checking a command before you run it is cheap and saves a blocked call.
+
+`agent-fence report` summarizes the audit log; `--card` writes a PNG and SVG that
+show counts only (no commands, paths or secrets). `agent-fence replay` runs the
+policy over a Claude Code or Codex transcript the user already has and shows what
+would have been blocked or asked, with nothing installed.
 
 ## Changing the policy (only when the user asks)
 

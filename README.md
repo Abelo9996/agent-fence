@@ -14,6 +14,35 @@ through their hooks, and any other agent can run its commands through a wrapper.
 Each decision is appended to a local audit log, so you can see what your agent
 tried and what was stopped.
 
+## See what your agent already tried (no install)
+
+Run the policy over a Claude Code or Codex session you already have, and see what
+would have been blocked or asked. Nothing to install, nothing to configure, read
+only:
+
+```bash
+npx -y @abelo9996/agent-fence replay ~/.codex/sessions/2026/.../rollout-*.jsonl
+# or a Claude Code transcript:
+npx -y @abelo9996/agent-fence replay ~/.claude/projects/<slug>/<session>.jsonl
+```
+
+It also shows where a naive command-grep guard would miss what agent-fence catches:
+a force push spelled `--force-with-lease=`, a blocked command chained after `&&`, a
+program name that comes from a variable, and the file reads and fetches a
+command-only grep never sees.
+
+Once the hook is logging decisions, `agent-fence report` turns the audit log into a
+one-screen summary, and `--card` writes something you can show:
+
+```bash
+agent-fence report --since 7d                 # allowed / asked / denied, riskiest blocks first
+agent-fence report --since 7d --card card.png # also card.png + card.svg, counts only, safe to share
+```
+
+![agent-fence card: "What my coding agent tried this week: 3 force pushes blocked, 2 secret file reads blocked, 41 commands allowed. check yours: npx agent-fence report"](assets/card.png)
+
+The card shows counts only: no commands, no paths, no secrets.
+
 ## Quickstart (30 seconds)
 
 ```bash

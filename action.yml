@@ -14,7 +14,7 @@ inputs:
   version:
     description: agent-fence version to install from npm (for example 0.2.0). A path to a package tarball also works.
     required: false
-    default: 0.2.0
+    default: 0.3.0
   args:
     description: Extra arguments for `agent-fence test`, split on whitespace (for example --strict).
     required: false
