@@ -4,6 +4,9 @@ import path from "node:path";
 import { cac } from "cac";
 import { handleHook } from "./adapters.js";
 import { auditLogPath, parseSince, readAudit } from "./audit.js";
+import { renderPng, renderSvg } from "./card.js";
+import { buildReport, exampleText, formatReport, type EvalRecord } from "./report.js";
+import { replayFile, toRecord } from "./replay.js";
 import { exportCodexRules } from "./codex-rules.js";
 import { STARTER_POLICY } from "./defaults.js";
 import { evaluate, howToChange, type Request } from "./engine.js";
@@ -345,6 +348,112 @@ cli
     }
     if (shown.some((e) => e.action !== "allow")) {
       process.stdout.write(`\nWhy a rule fired: agent-fence explain <rule>. Full entries: agent-fence log --json\n`);
+    }
+  });
+
+cli
+  .command("report", "One-screen report of recent decisions: allowed / asked / denied, riskiest blocks first")
+  .option("--since <when>", "Only entries newer than this (30m, 2h, 7d or a date)")
+  .option("--all", "All projects, not only the current one")
+  .option("--card <file>", "Also write a shareable card: <file> (PNG) and a .svg beside it")
+  .option("--json", "Print the report as JSON")
+  .action(async (o: { since?: string; all?: boolean; card?: string; json?: boolean }) => {
+    const root = normalizePath(findProjectRoot(process.cwd()), process.cwd());
+    let since: Date | undefined;
+    try {
+      since = o.since ? parseSince(o.since) : undefined;
+    } catch (e) {
+      fail((e as Error).message);
+    }
+    const records = readAudit().filter((e) => (o.all || e.project === root) && (!since || new Date(e.ts) >= since));
+    const report = buildReport(records as EvalRecord[], { since: o.since });
+    if (o.json) {
+      process.stdout.write(JSON.stringify({ version: VERSION, ...report }, null, 2) + "\n");
+    } else {
+      process.stdout.write(formatReport(report));
+    }
+    if (o.card) {
+      const svg = renderSvg(report);
+      const svgPath = o.card.replace(/\.png$/i, "") + ".svg";
+      writeFileSync(svgPath, svg);
+      try {
+        writeFileSync(o.card, await renderPng(svg));
+        if (!o.json) process.stdout.write(`\nCard written to ${o.card} and ${svgPath} (counts only; safe to share).\n`);
+      } catch (e) {
+        if (!o.json) process.stdout.write(`\nCard SVG written to ${svgPath}; PNG rendering failed: ${(e as Error).message}\n`);
+      }
+    }
+  });
+
+cli
+  .command("replay <session-log>", "Run the policy over an existing Claude Code or Codex transcript: what would be blocked or asked")
+  .option("--source <source>", "Force the transcript format: claude or codex (default: auto-detect)")
+  .option("--all", "Show allowed calls too, not only ask and deny")
+  .option("-n, --lines <n>", "Max blocked/asked examples to print", { default: 40 })
+  .option("--json", "Print as JSON")
+  .action((file: string, o: { source?: string; all?: boolean; lines: number; json?: boolean }) => {
+    if (!existsSync(file)) fail(`no such file: ${file}`);
+    if (o.source && o.source !== "claude" && o.source !== "codex") fail(`--source must be claude or codex`);
+    let r;
+    try {
+      r = replayFile(file, o.source as "claude" | "codex" | undefined);
+    } catch (e) {
+      fail((e as Error).message);
+    }
+    const records = r.results.map(toRecord);
+    const report = buildReport(records, {});
+    // Bash calls agent-fence stopped (ask/deny) that a naive command-grep guard would have missed.
+    const blockedBash = r.results.filter((x) => x.req.tool === "bash" && x.decision.action !== "allow" && x.decision.rule !== "default");
+    const naiveMissed = blockedBash.filter((x) => !x.naiveCaught);
+    const nonCommand = r.results.filter((x) => x.req.tool !== "bash" && x.decision.action !== "allow" && x.decision.rule !== "default");
+    if (o.json) {
+      process.stdout.write(
+        JSON.stringify(
+          {
+            version: VERSION,
+            source: r.source,
+            file,
+            calls: r.calls,
+            ...report,
+            naive: { blockedCommands: blockedBash.length, missedByNaive: naiveMissed.length, nonCommandBlocks: nonCommand.length },
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+      return;
+    }
+    process.stdout.write(`replay ${file}\n`);
+    process.stdout.write(`${r.source} transcript, ${r.calls} tool calls mapped to ${report.total} policy checks\n`);
+    process.stdout.write(`would be:  ${report.byAction.allow} allowed  ${report.byAction.ask} asked  ${report.byAction.deny} denied\n`);
+    if (report.risky.length) {
+      process.stdout.write(`\nwould be blocked or asked (riskiest first):\n`);
+      let shown = 0;
+      const max = Math.max(1, Number(o.lines) || 40);
+      for (const g of report.risky) {
+        const verb = g.action === "deny" ? "deny " : "ask  ";
+        process.stdout.write(`  ${verb} x${String(g.count).padEnd(4)} ${g.label}  [${g.rule}]\n`);
+        for (const ex of g.examples) {
+          if (shown++ >= max) break;
+          process.stdout.write(`          ${ex}\n`);
+        }
+      }
+    } else {
+      process.stdout.write(`\nNothing in this transcript would be blocked or asked.\n`);
+    }
+    if (blockedBash.length || nonCommand.length) {
+      process.stdout.write(`\nvs a naive command-grep guard:\n`);
+      process.stdout.write(`  ${blockedBash.length} command(s) agent-fence would stop; a naive grep would miss ${naiveMissed.length} of them\n`);
+      for (const x of naiveMissed.slice(0, 5)) {
+        process.stdout.write(`    missed: ${exampleText(toRecord(x))}  [${x.decision.rule}]\n`);
+      }
+      if (nonCommand.length) {
+        process.stdout.write(`  ${nonCommand.length} file/fetch access(es) agent-fence would stop that a command-only grep never sees\n`);
+      }
+    }
+    if (o.all) {
+      const allowed = r.results.filter((x) => x.decision.action === "allow");
+      process.stdout.write(`\n${allowed.length} allowed call(s) not shown; add --json for the full list.\n`);
     }
   });
 
